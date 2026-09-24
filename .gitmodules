@@ -1,0 +1,3 @@
+[submodule "third_party/ttsim"]
+	path = third_party/ttsim
+	url = https://github.com/tenstorrent/ttsim.git

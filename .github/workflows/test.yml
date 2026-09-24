@@ -8,6 +8,13 @@ jobs:
         working-directory: spatial-mapping-analyzer
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Verify pinned TT-Sim checkout
+        working-directory: .
+        run: |
+          test "$(git -C third_party/ttsim rev-parse HEAD)" = "$(git rev-parse HEAD:third_party/ttsim)"
+          test -f third_party/ttsim/make.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

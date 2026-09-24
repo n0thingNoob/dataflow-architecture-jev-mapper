@@ -144,6 +144,13 @@ transactional crash recovery; resume is not implemented.
 
 ## TT-Sim status
 
+The official simulator source is pinned as a Git submodule at
+[`../third_party/ttsim`](../third_party/ttsim). From the repository root, run
+`git submodule update --init --recursive`; see
+[dependency setup and build instructions](../third_party/README.md).
+The submodule supplies upstream code; `backends/tt_sim.py` remains the adapter
+that will connect Mapping IR to an executable workload and report.
+
 **This PR does not launch TT-Sim.** The command below records unsupported reports,
 creates no best mapping, and exits 2; it never silently switches to mock:
 
@@ -162,7 +169,8 @@ and typically `TT_METAL_SLOW_DISPATCH_MODE=1` with a built TT-Metal executable.
 There is no official Mapping-YAML ingestion interface. See the
 [official ttsim setup](https://github.com/tenstorrent/ttsim#running-with-tt-metalium)
 and [library API](https://github.com/tenstorrent/ttsim/blob/main/docs/libttsim_api.md).
-Those dependencies are intentionally not required to run this scaffold.
+Initializing/building the simulator and installing TT-Metal are not required
+to run the mock scaffold.
 
 ## Next implementation steps
 
@@ -188,4 +196,5 @@ The suite covers real CLI subprocess runs, all expected artifacts, feedback
 delivery, DAG preservation, schema drift, malformed mappings, core capacity,
 dependency order, unsupported fusion, shape/edge consistency, backend failure
 recovery, report provenance, stable best selection and unsupported TT-Sim.
-GitHub Actions runs the suite and the ten-iteration demo.
+GitHub Actions verifies checkout of the pinned submodule, runs the suite and
+executes the ten-iteration mock demo. It does not build or launch TT-Sim.
