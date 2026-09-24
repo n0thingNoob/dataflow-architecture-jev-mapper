@@ -1,6 +1,5 @@
 from mapping_ir.models import Mapping, Region
 from specs.io import fingerprint
-from validator.checks import topological_ops
 
 
 class PassthroughAnalyzer:
@@ -16,5 +15,5 @@ class PassthroughAnalyzer:
             program_hash=fingerprint(program),
             architecture_hash=fingerprint(architecture),
             regions=[Region(id=f"region_{i}", ops=[op.id], cores=1)
-                     for i, op in enumerate(topological_ops(program))],
+                     for i, op in enumerate(program.ordered_ops())],
         )

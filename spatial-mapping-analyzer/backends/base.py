@@ -27,6 +27,12 @@ class Metric(Contract):
         return self
 
 
+def unsupported_metrics(reason: str) -> dict[str, Metric]:
+    units = {"total_cycles": "cycles", "latency": "ns", "core_utilization": "fraction",
+             "stall_cycles": "cycles", "communication": "bytes", "buffer_usage": "bytes"}
+    return {name: Metric(unit=unit, reason=reason) for name, unit in units.items()}
+
+
 class Report(Versioned):
     backend: Identifier
     backend_version: Identifier
@@ -42,6 +48,13 @@ class Report(Versioned):
         if self.objective is not None and (self.status != "ok" or self.correctness == "failed"):
             raise ValueError("Failed, skipped or unsupported reports cannot carry a ranking objective")
         return self
+
+    def objective_key(self) -> tuple | None:
+        """Only objectives with the same identity and units may be compared."""
+        if self.objective is None:
+            return None
+        cost = self.objective
+        return self.backend, self.backend_version, cost.name, cost.unit, cost.source
 
 
 class Backend(Protocol):

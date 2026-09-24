@@ -1,3 +1,4 @@
+from graphlib import TopologicalSorter
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,3 +59,11 @@ class Program(Versioned):
     outputs: Annotated[list[Identifier], Field(min_length=1)]
     ops: Annotated[list[Op], Field(min_length=1)]
     edges: list[Edge]
+
+    def ordered_ops(self) -> list[Op]:
+        """Stable dependency order; raises CycleError for a cyclic program."""
+        producers = {op.output: op.id for op in self.ops}
+        dependencies = {op.id: list(dict.fromkeys(producers[t] for t in op.inputs if t in producers))
+                        for op in self.ops}
+        nodes = {op.id: op for op in self.ops}
+        return [nodes[name] for name in TopologicalSorter(dependencies).static_order()]

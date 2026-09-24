@@ -1,43 +1,21 @@
 import json
 import subprocess
 import sys
-import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
 
-import yaml
-
 from analyzer.passthrough import PassthroughAnalyzer
 from backends.base import Report
 from backends.mock import MockBackend
-from export_schemas import MODELS, schema_for
 from mapping_ir.models import Mapping
 from pipeline import run
 from specs.io import read_yaml
-from specs.models import Architecture, Program
+from specs.models import Program
+from tests.support import ROOT, AnalyzerTestCase
 from validator.checks import validate_inputs, validate_mapping
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-class PipelineTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.output = Path(self.temp.name) / "run"
-        self.arch = Architecture.model_validate(read_yaml(ROOT / "examples/wormhole.yaml"))
-        self.program = Program.model_validate(read_yaml(ROOT / "examples/matmul_relu_matmul.yaml"))
-        self.mapping = PassthroughAnalyzer().propose_mapping(self.arch, self.program)
-
-    def cli(self, *extra):
-        return subprocess.run(
-            [sys.executable, str(ROOT / "run_analyzer.py"),
-             "--arch", str(ROOT / "examples/wormhole.yaml"),
-             "--program", str(ROOT / "examples/matmul_relu_matmul.yaml"),
-             "--iterations", "3", "--output", str(self.output), *extra],
-            cwd=self.temp.name, text=True, capture_output=True, timeout=30)
-
+class PipelineTests(AnalyzerTestCase):
     def test_cli_full_loop_and_all_artifacts(self):
         result = self.cli()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -205,9 +183,16 @@ class PipelineTests(unittest.TestCase):
             "inputs": ["a", "b"], "outputs": ["c"],
             "ops": [{"id": "Add", "op": "add", "inputs": ["a", "b"], "output": "c"}], "edges": []})
         self.assertEqual(validate_inputs(self.arch, program), [])
-        for name, model in MODELS.items():
-            stored = json.loads((ROOT / "specs/schemas" / f"{name}.schema.json").read_text())
-            self.assertEqual(stored, schema_for(model), f"Regenerate {name} schema")
+        destination = self.workdir / "schemas"
+        result = subprocess.run([sys.executable, str(ROOT / "export_schemas.py"), "--output", str(destination)],
+                                capture_output=True, text=True, timeout=30, cwd=self.workdir)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({p.name for p in destination.iterdir()},
+                         {f"{name}.schema.json" for name in ("arch", "program", "mapping", "report")})
+        for path in destination.iterdir():
+            schema = json.loads(path.read_text())
+            self.assertEqual(schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
+            self.assertEqual(schema["type"], "object")
 
 
 if __name__ == "__main__":

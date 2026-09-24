@@ -1,4 +1,4 @@
-"""Generate reviewable JSON Schema definitions from the runtime contracts."""
+"""Export the four JSON Schemas from runtime models; generated files stay out of Git."""
 import argparse
 from pathlib import Path
 

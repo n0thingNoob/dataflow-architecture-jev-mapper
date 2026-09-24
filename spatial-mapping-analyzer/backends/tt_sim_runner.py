@@ -17,12 +17,11 @@ import struct
 import sys
 from pathlib import Path
 
-# Keep this runner independent of Pydantic and the analyzer's import path.
-WORKLOAD = "wormhole_brisc_add_u32_v1"
+from backends.tt_sim_dummy import CORE, DATA_ADDRESS, WORKLOAD, load_dummy
+
 RESET_REGISTER = 0xFFB121B0
 ALL_RESET = 0x47800
 BRISC_RESET = 0x800
-DATA_ADDRESS = 0x1000
 TLB_CONFIG_OFFSET = 0x1FC00000
 WINDOW_MASK = 0xFFFFF  # Wormhole TLB 0 is a 1 MiB window.
 
@@ -60,7 +59,7 @@ class Wormhole:
 
     def select_window(self, address):
         # Unicast physical NoC coordinate (1,1), relaxed ordering, local page.
-        coordinate = 1 | (1 << 6)
+        coordinate = CORE["x"] | (CORE["y"] << 6)
         config = (address >> 20) | (coordinate << 16)
         self.pci_write(self.bar0 + TLB_CONFIG_OFFSET, struct.pack("<Q", config))
         return self.bar0 + (address & WINDOW_MASK)
@@ -79,25 +78,8 @@ class Wormhole:
 
 
 def execute(library, manifest_path):
-    manifest = json.loads(manifest_path.read_text())
-    if manifest["workload"] != WORKLOAD or manifest["core"] != {"x": 1, "y": 1, "processor": "BRISC"}:
-        raise ValueError("Unsupported dummy workload/core")
-    if manifest["firmware"] != "dummy.bin" or manifest["data"] != "dummy_data.bin":
-        raise ValueError("Dummy file names must match the fixed workload contract")
-    firmware = (manifest_path.parent / "dummy.bin").read_bytes()
-    data = (manifest_path.parent / "dummy_data.bin").read_bytes()
-    if digest(firmware) != manifest["firmware_sha256"] or digest(data) != manifest["data_sha256"]:
-        raise ValueError("Dummy file checksum mismatch")
-    if len(firmware) != 32 or len(data) != 16:
-        raise ValueError("Unexpected dummy file size")
-    lhs, rhs, initial_output, initial_done = struct.unpack("<4I", data)
-    if initial_output != 0xFFFFFFFF or initial_done != 0:
-        raise ValueError("Dummy output must start pending with completion cleared")
-    if manifest["inputs"] != {"lhs": lhs, "rhs": rhs} or manifest["expected_result"] != ((lhs + rhs) & 0xFFFFFFFF):
-        raise ValueError("Manifest inputs/result do not match dummy data")
-    budget = manifest["max_clock_steps"]
-    if type(budget) is not int or not 1 <= budget <= 10000:
-        raise ValueError("Invalid simulator step budget")
+    manifest, firmware, data = load_dummy(manifest_path)
+    lhs, rhs, initial_output, _ = struct.unpack("<4I", data)
     simulator = Wormhole(library)
     simulator.initialize()
     try:
@@ -114,7 +96,7 @@ def execute(library, manifest_path):
         completed = 0
         actual = initial_output
         steps = 0
-        for steps in range(1, budget + 1):
+        for steps in range(1, manifest["max_clock_steps"] + 1):
             simulator.lib.libttsim_clock(1)
             _, _, actual, completed = struct.unpack("<4I", simulator.read(DATA_ADDRESS, 16))
             if completed:

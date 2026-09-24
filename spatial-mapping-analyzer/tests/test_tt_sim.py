@@ -5,30 +5,18 @@ import os
 import struct
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from analyzer.passthrough import PassthroughAnalyzer
 from backends.tt_sim import DEFAULT_LIBRARY, TTSimBackend
 from backends.tt_sim_dummy import generate_dummy
-from specs.io import read_yaml
-from specs.models import Architecture, Program
+from tests.support import ROOT, AnalyzerTestCase
 
-ROOT = Path(__file__).resolve().parents[1]
 LIBRARY = Path(os.environ.get("TT_SIM_TEST_LIBRARY", str(DEFAULT_LIBRARY))).resolve()
 
 
-class DummyBoundaryTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.workdir = Path(self.temp.name)
-        self.arch = Architecture.model_validate(read_yaml(ROOT / "examples/wormhole.yaml"))
-        self.program = Program.model_validate(read_yaml(ROOT / "examples/matmul_relu_matmul.yaml"))
-        self.mapping = PassthroughAnalyzer().propose_mapping(self.arch, self.program)
-
+class DummyBoundaryTests(AnalyzerTestCase):
     def test_dummy_files_contain_inputs_not_the_computed_output(self):
         manifest = generate_dummy(self.arch, self.program, self.mapping, self.workdir)
         self.assertEqual(struct.unpack("<4I", (self.workdir / "dummy_data.bin").read_bytes()), (3, 3, 0xFFFFFFFF, 0))
@@ -77,12 +65,8 @@ class DummyBoundaryTests(unittest.TestCase):
 
     @unittest.skipUnless(LIBRARY.is_file(), "Build the pinned Wormhole libttsim.so to run real integration")
     def test_real_cli_three_trials_and_feedback(self):
-        output = self.workdir / "run"
-        process = subprocess.run(
-            [sys.executable, str(ROOT / "run_analyzer.py"), "--arch", str(ROOT / "examples/wormhole.yaml"),
-             "--program", str(ROOT / "examples/matmul_relu_matmul.yaml"), "--backend", "tt-sim",
-             "--tt-sim-library", str(LIBRARY), "--iterations", "3", "--output", str(output)],
-            text=True, capture_output=True, timeout=60, cwd=self.workdir)
+        output = self.output
+        process = self.cli("--backend", "tt-sim", "--tt-sim-library", str(LIBRARY))
         self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         summary = json.loads((output / "summary.json").read_text())
         self.assertEqual(summary["best_trial_id"], "trial_0000")
@@ -115,11 +99,12 @@ class DummyBoundaryTests(unittest.TestCase):
         manifest["firmware_sha256"] = hashlib.sha256(firmware).hexdigest()
         (self.workdir / "dummy.json").write_text(json.dumps(manifest))
         process = subprocess.run(
-            [sys.executable, str(ROOT / "backends/tt_sim_runner.py"), "--library", str(LIBRARY),
+            [sys.executable, "-m", "backends.tt_sim_runner", "--library", str(LIBRARY),
              "--manifest", str(self.workdir / "dummy.json"), "--result", str(self.workdir / "runner_result.json")],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, timeout=30, cwd=ROOT)
         self.assertNotEqual(process.returncode, 0)
         self.assertTrue(process.stdout or process.stderr)
+        self.assertNotIn("Traceback", process.stdout + process.stderr)
         self.assertFalse((self.workdir / "runner_result.json").exists())
 
 

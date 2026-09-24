@@ -1,5 +1,5 @@
 from collections import Counter
-from graphlib import CycleError, TopologicalSorter
+from graphlib import CycleError
 
 from specs.io import fingerprint
 
@@ -13,12 +13,10 @@ def schema_errors(exc):
             for e in exc.errors()]
 
 
-def topological_ops(program):
-    producers = {op.output: op.id for op in program.ops}
-    graph = {op.id: list(dict.fromkeys(producers[t] for t in op.inputs if t in producers))
-             for op in program.ops}
-    nodes = {op.id: op for op in program.ops}
-    return [nodes[name] for name in TopologicalSorter(graph).static_order()]
+class InvalidInput(ValueError):
+    def __init__(self, errors):
+        super().__init__("Invalid architecture, program or run options")
+        self.errors = errors
 
 
 def validate_inputs(architecture, program):
@@ -49,7 +47,7 @@ def validate_inputs(architecture, program):
     if actual != expected:
         errors.append(error("EDGE_MISMATCH", "program.edges", "Edges must exactly match tensor producer/consumer ports"))
     try:
-        topological_ops(program)
+        program.ordered_ops()
     except CycleError:
         errors.append(error("PROGRAM_CYCLE", "program.ops", "Program must be a DAG"))
     for op in program.ops:

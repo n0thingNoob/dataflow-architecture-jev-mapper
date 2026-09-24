@@ -15,7 +15,7 @@ from backends.tt_sim import TTSimBackend
 from pipeline import run
 from specs.io import read_yaml
 from specs.models import Architecture, Program
-from validator.checks import error, schema_errors, validate_inputs
+from validator.checks import InvalidInput, error, schema_errors
 
 
 def main(argv=None):
@@ -31,16 +31,13 @@ def main(argv=None):
     try:
         architecture = Architecture.model_validate(read_yaml(args.arch))
         program = Program.model_validate(read_yaml(args.program))
-        errors = validate_inputs(architecture, program)
-        if args.iterations < 1:
-            errors.append(error("ITERATIONS", "iterations", "Must be positive"))
-        if errors:
-            print(json.dumps({"status": "invalid_input", "errors": errors}), file=sys.stderr)
-            return 2
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         output = args.output or Path(__file__).parent / "results" / f"{stamp}-{uuid4().hex[:8]}"
         backend = MockBackend() if args.backend == "mock" else TTSimBackend(args.tt_sim_library, args.tt_sim_timeout)
         summary = run(architecture, program, PassthroughAnalyzer(), backend, args.iterations, output)
+    except InvalidInput as exc:
+        print(json.dumps({"status": "invalid_input", "errors": exc.errors}), file=sys.stderr)
+        return 2
     except ValidationError as exc:
         print(json.dumps({"status": "invalid_input", "errors": schema_errors(exc)}), file=sys.stderr)
         return 2
