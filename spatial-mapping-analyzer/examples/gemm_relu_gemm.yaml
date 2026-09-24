@@ -1,0 +1,18 @@
+schema_version: '0.1'
+id: gemm_relu_gemm_int32
+tensors:
+  a: {shape: [32, 32], dtype: int32}
+  b: {shape: [32, 32], dtype: int32}
+  c: {shape: [32, 32], dtype: int32}
+  hidden: {shape: [32, 32], dtype: int32}
+  activated: {shape: [32, 32], dtype: int32}
+  y: {shape: [32, 32], dtype: int32}
+inputs: [a, b, c]
+outputs: [y]
+ops:
+  - {id: Gemm0, op: matmul, inputs: [a, b], output: hidden}
+  - {id: ReLU1, op: relu, inputs: [hidden], output: activated}
+  - {id: Gemm2, op: matmul, inputs: [activated, c], output: y}
+edges:
+  - {source: Gemm0, target: ReLU1, tensor: hidden, input_index: 0}
+  - {source: ReLU1, target: Gemm2, tensor: activated, input_index: 0}

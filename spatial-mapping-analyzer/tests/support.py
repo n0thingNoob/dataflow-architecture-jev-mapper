@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import tempfile
@@ -5,10 +6,12 @@ import unittest
 from pathlib import Path
 
 from analyzer.passthrough import PassthroughAnalyzer
+from backends.tt_sim import DEFAULT_LIBRARY
 from specs.io import read_yaml
 from specs.models import Architecture, Program
 
 ROOT = Path(__file__).resolve().parents[1]
+LIBRARY = Path(os.environ.get("TT_SIM_TEST_LIBRARY", str(DEFAULT_LIBRARY))).resolve()
 
 
 class AnalyzerTestCase(unittest.TestCase):

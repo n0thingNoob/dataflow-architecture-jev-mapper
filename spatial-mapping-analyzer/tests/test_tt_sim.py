@@ -1,19 +1,15 @@
 """Real integration tests run when the pinned Wormhole library has been built."""
 import hashlib
 import json
-import os
 import struct
 import subprocess
 import sys
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-from backends.tt_sim import DEFAULT_LIBRARY, TTSimBackend
+from backends.tt_sim import TTSimBackend
 from backends.tt_sim_dummy import generate_dummy
-from tests.support import ROOT, AnalyzerTestCase
-
-LIBRARY = Path(os.environ.get("TT_SIM_TEST_LIBRARY", str(DEFAULT_LIBRARY))).resolve()
+from tests.support import LIBRARY, ROOT, AnalyzerTestCase
 
 
 class DummyBoundaryTests(AnalyzerTestCase):

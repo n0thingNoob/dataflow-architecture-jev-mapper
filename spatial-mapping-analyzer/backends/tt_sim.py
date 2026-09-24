@@ -16,6 +16,8 @@ RUNNER_ROOT = Path(__file__).resolve().parents[1]
 
 class TTSimBackend:
     name = "tt-sim"
+    runner_module = "backends.tt_sim_runner"
+    manifest_filename = "dummy.json"
 
     def __init__(self, library=None, timeout_seconds=30.0):
         self.library = Path(library).resolve() if library is not None else DEFAULT_LIBRARY
@@ -24,8 +26,8 @@ class TTSimBackend:
         self.timeout_seconds = timeout_seconds
 
     def _invoke(self, workdir, library_hash):
-        command = [sys.executable, "-m", "backends.tt_sim_runner", "--library", str(self.library),
-                   "--manifest", str(workdir / "dummy.json"), "--result", str(workdir / "runner_result.json")]
+        command = [sys.executable, "-m", self.runner_module, "--library", str(self.library),
+                   "--manifest", str(workdir / self.manifest_filename), "--result", str(workdir / "runner_result.json")]
         write_json(workdir / "invocation.json", {"argv": command, "cwd": str(RUNNER_ROOT),
                    "timeout_seconds": self.timeout_seconds, "library_sha256": library_hash})
         with (workdir / "stdout.log").open("w") as stdout, (workdir / "stderr.log").open("w") as stderr:

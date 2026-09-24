@@ -29,6 +29,10 @@ jobs:
       - run: python run_analyzer.py --arch examples/wormhole.yaml --program examples/matmul_relu_matmul.yaml --iterations 10 --output results/ci-demo
       - name: Run real TT-Sim dummy E2E
         run: python run_analyzer.py --arch examples/wormhole.yaml --program examples/matmul_relu_matmul.yaml --backend tt-sim --iterations 3 --output results/ci-tt-sim
+      - name: Run tensor program E2E
+        run: python run_analyzer.py --arch examples/wormhole_brisc.yaml --program examples/gemm_relu_gemm.yaml --backend tt-sim-program --iterations 2 --output results/ci-tensor
+      - name: Run scalar diamond E2E
+        run: python run_analyzer.py --arch examples/wormhole_brisc.yaml --program examples/scalar_diamond.yaml --inputs examples/scalar_diamond.inputs.json --backend tt-sim-program --execution-policy exclusive_cores_dependency_barrier --iterations 2 --output results/ci-scalar
       - name: Upload real simulator evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -37,4 +41,6 @@ jobs:
           path: |
             spatial-mapping-analyzer/results/ci-tt-sim/
             spatial-mapping-analyzer/results/schemas/
+            spatial-mapping-analyzer/results/ci-tensor/
+            spatial-mapping-analyzer/results/ci-scalar/
           if-no-files-found: warn

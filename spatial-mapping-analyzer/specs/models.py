@@ -34,8 +34,8 @@ class Architecture(Versioned):
 
 
 class Tensor(Contract):
-    shape: Annotated[list[PositiveInt], Field(min_length=1)]
-    dtype: Literal["float32", "bfloat16"]
+    shape: list[PositiveInt]  # [] is a scalar; no implicit [1] conversion.
+    dtype: Literal["float32", "bfloat16", "int32"]
 
 
 class Op(Contract):

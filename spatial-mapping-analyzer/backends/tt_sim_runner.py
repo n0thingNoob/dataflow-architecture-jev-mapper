@@ -32,6 +32,7 @@ def digest(data):
 
 class Wormhole:
     def __init__(self, library):
+        self.core = (CORE["x"], CORE["y"])
         self.lib = ctypes.CDLL(str(library))
         signatures = {
             "libttsim_init": ([], None), "libttsim_exit": ([], None),
@@ -58,8 +59,8 @@ class Wormhole:
         self.lib.libttsim_pci_mem_wr_bytes(address, buffer, len(data))
 
     def select_window(self, address):
-        # Unicast physical NoC coordinate (1,1), relaxed ordering, local page.
-        coordinate = CORE["x"] | (CORE["y"] << 6)
+        # Unicast physical NoC coordinate, relaxed ordering, local page.
+        coordinate = self.core[0] | (self.core[1] << 6)
         config = (address >> 20) | (coordinate << 16)
         self.pci_write(self.bar0 + TLB_CONFIG_OFFSET, struct.pack("<Q", config))
         return self.bar0 + (address & WINDOW_MASK)
@@ -120,14 +121,14 @@ def execute(library, manifest_path):
         simulator.lib.libttsim_exit()
 
 
-def main():
+def main(execute_fn=execute):
     parser = argparse.ArgumentParser()
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
     args = parser.parse_args()
     try:
-        result = execute(args.library.resolve(strict=True), args.manifest.resolve(strict=True))
+        result = execute_fn(args.library.resolve(strict=True), args.manifest.resolve(strict=True))
         code = 0
     except Exception as exc:
         result = {"status": "error", "message": str(exc)}

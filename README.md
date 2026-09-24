@@ -18,3 +18,7 @@ The mock analyzer can run without initializing or building the simulator.
 The TT-Sim backend also runs a real, generated BRISC dummy program through the
 official simulator library. See the analyzer's
 [TT-Sim dummy E2E instructions](spatial-mapping-analyzer/README.md#real-tt-sim-dummy-e2e).
+
+For actual program execution with CPU reference checks, run the
+[tensor GEMM–ReLU–GEMM and scalar diamond examples](spatial-mapping-analyzer/README.md#tensor-and-scalar-program-e2e).
+These use int32 BRISC kernels; Tensix FPU/SFPU lowering remains future work.

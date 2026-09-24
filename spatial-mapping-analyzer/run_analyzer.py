@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from analyzer.passthrough import PassthroughAnalyzer
 from backends.mock import MockBackend
 from backends.tt_sim import TTSimBackend
+from backends.tt_sim_program import TTSimProgramBackend
 from pipeline import run
 from specs.io import read_yaml
 from specs.models import Architecture, Program
@@ -23,7 +24,11 @@ def main(argv=None):
     parser.add_argument("--arch", type=Path, required=True)
     parser.add_argument("--program", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=10)
-    parser.add_argument("--backend", choices=["mock", "tt-sim"], default="mock")
+    parser.add_argument("--backend", choices=["mock", "tt-sim", "tt-sim-program"], default="mock")
+    parser.add_argument("--execution-policy", choices=["exclusive_cores_tensor_barrier", "exclusive_cores_dependency_barrier"],
+                        default="exclusive_cores_tensor_barrier")
+    parser.add_argument("--inputs", type=Path, help="Program backend: JSON input name -> flat int32 array")
+    parser.add_argument("--seed", type=int, default=0, help="Program backend: seed for small integer inputs when --inputs is omitted")
     parser.add_argument("--tt-sim-library", type=Path, help="Wormhole libttsim.so; defaults to the submodule release build")
     parser.add_argument("--tt-sim-timeout", type=float, default=30.0, help="Runner wall-time limit per trial, in seconds")
     parser.add_argument("--output", type=Path)
@@ -33,8 +38,15 @@ def main(argv=None):
         program = Program.model_validate(read_yaml(args.program))
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         output = args.output or Path(__file__).parent / "results" / f"{stamp}-{uuid4().hex[:8]}"
-        backend = MockBackend() if args.backend == "mock" else TTSimBackend(args.tt_sim_library, args.tt_sim_timeout)
-        summary = run(architecture, program, PassthroughAnalyzer(), backend, args.iterations, output)
+        if args.inputs and args.backend != "tt-sim-program":
+            raise ValueError("--inputs requires --backend tt-sim-program")
+        if args.backend == "tt-sim-program":
+            inputs = json.loads(args.inputs.read_text()) if args.inputs else None
+            backend = TTSimProgramBackend(args.tt_sim_library, args.tt_sim_timeout, inputs, args.seed)
+        else:
+            backend = MockBackend() if args.backend == "mock" else TTSimBackend(args.tt_sim_library, args.tt_sim_timeout)
+        analyzer = PassthroughAnalyzer(args.execution_policy)
+        summary = run(architecture, program, analyzer, backend, args.iterations, output)
     except InvalidInput as exc:
         print(json.dumps({"status": "invalid_input", "errors": exc.errors}), file=sys.stderr)
         return 2
@@ -52,10 +64,12 @@ def main(argv=None):
     print(f"Best: {summary['best_trial_id'] or 'none'}")
     if backend.name == "mock":
         print("Passthrough only: identical candidates, constant synthetic score; hardware cycles unavailable.")
+    elif backend.name == "tt-sim-program":
+        print("Int32 DAG backend: BRISC execution with CPU reference verification; hardware performance unavailable.")
     else:
         print("TT-Sim mode executes a BRISC dummy only; program DAG lowering and hardware latency remain unavailable.")
-        if summary["status"] != "ok":
-            print("No successful result; inspect each trial's report.json and runner logs.")
+    if summary["status"] != "ok":
+        print("No successful result; inspect each trial's report.json and runner logs.")
     return 0 if summary["status"] == "ok" else 2
 
 
