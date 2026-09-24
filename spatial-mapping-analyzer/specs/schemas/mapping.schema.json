@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Fusion": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "matmul_relu",
+          "title": "Kind",
+          "type": "string"
+        },
+        "ops": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Ops",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "ops"
+      ],
+      "title": "Fusion",
+      "type": "object"
+    },
+    "Region": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "ops": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Ops",
+          "type": "array"
+        },
+        "cores": {
+          "exclusiveMinimum": 0,
+          "title": "Cores",
+          "type": "integer"
+        },
+        "fusions": {
+          "items": {
+            "$ref": "#/$defs/Fusion"
+          },
+          "title": "Fusions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "ops",
+        "cores"
+      ],
+      "title": "Region",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "extensions": {
+      "additionalProperties": true,
+      "title": "Extensions",
+      "type": "object"
+    },
+    "program_id": {
+      "minLength": 1,
+      "title": "Program Id",
+      "type": "string"
+    },
+    "program_hash": {
+      "minLength": 1,
+      "title": "Program Hash",
+      "type": "string"
+    },
+    "architecture_hash": {
+      "minLength": 1,
+      "title": "Architecture Hash",
+      "type": "string"
+    },
+    "execution_policy": {
+      "const": "exclusive_cores_tensor_barrier",
+      "default": "exclusive_cores_tensor_barrier",
+      "title": "Execution Policy",
+      "type": "string"
+    },
+    "regions": {
+      "items": {
+        "$ref": "#/$defs/Region"
+      },
+      "minItems": 1,
+      "title": "Regions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "program_id",
+    "program_hash",
+    "architecture_hash",
+    "regions"
+  ],
+  "title": "Mapping",
+  "type": "object"
+}

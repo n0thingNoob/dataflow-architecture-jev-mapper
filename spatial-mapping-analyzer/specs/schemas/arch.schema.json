@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Grid": {
+      "additionalProperties": false,
+      "properties": {
+        "rows": {
+          "exclusiveMinimum": 0,
+          "title": "Rows",
+          "type": "integer"
+        },
+        "cols": {
+          "exclusiveMinimum": 0,
+          "title": "Cols",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rows",
+        "cols"
+      ],
+      "title": "Grid",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "extensions": {
+      "additionalProperties": true,
+      "title": "Extensions",
+      "type": "object"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "grid": {
+      "$ref": "#/$defs/Grid"
+    },
+    "available_cores": {
+      "exclusiveMinimum": 0,
+      "title": "Available Cores",
+      "type": "integer"
+    },
+    "local_memory_bytes_per_core": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Local Memory Bytes Per Core"
+    },
+    "compute_units": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Compute Units",
+      "type": "array"
+    },
+    "network_topology": {
+      "default": "unspecified",
+      "minLength": 1,
+      "title": "Network Topology",
+      "type": "string"
+    },
+    "multicast": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Multicast"
+    },
+    "bandwidth_bytes_per_cycle": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Bandwidth Bytes Per Cycle"
+    },
+    "link_latency_cycles": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Link Latency Cycles"
+    }
+  },
+  "required": [
+    "id",
+    "grid",
+    "available_cores"
+  ],
+  "title": "Architecture",
+  "type": "object"
+}

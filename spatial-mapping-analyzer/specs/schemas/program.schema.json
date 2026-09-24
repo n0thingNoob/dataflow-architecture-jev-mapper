@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        },
+        "tensor": {
+          "minLength": 1,
+          "title": "Tensor",
+          "type": "string"
+        },
+        "input_index": {
+          "minimum": 0,
+          "title": "Input Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "tensor",
+        "input_index"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "Op": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "matmul",
+            "relu",
+            "add"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Inputs",
+          "type": "array"
+        },
+        "output": {
+          "minLength": 1,
+          "title": "Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "op",
+        "inputs",
+        "output"
+      ],
+      "title": "Op",
+      "type": "object"
+    },
+    "Tensor": {
+      "additionalProperties": false,
+      "properties": {
+        "shape": {
+          "items": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Shape",
+          "type": "array"
+        },
+        "dtype": {
+          "enum": [
+            "float32",
+            "bfloat16"
+          ],
+          "title": "Dtype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "shape",
+        "dtype"
+      ],
+      "title": "Tensor",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "extensions": {
+      "additionalProperties": true,
+      "title": "Extensions",
+      "type": "object"
+    },
+    "id": {
+      "minLength": 1,
+      "title": "Id",
+      "type": "string"
+    },
+    "tensors": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Tensor"
+      },
+      "propertyNames": {
+        "minLength": 1
+      },
+      "title": "Tensors",
+      "type": "object"
+    },
+    "inputs": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Inputs",
+      "type": "array"
+    },
+    "outputs": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "ops": {
+      "items": {
+        "$ref": "#/$defs/Op"
+      },
+      "minItems": 1,
+      "title": "Ops",
+      "type": "array"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "title": "Edges",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "tensors",
+    "inputs",
+    "outputs",
+    "ops",
+    "edges"
+  ],
+  "title": "Program",
+  "type": "object"
+}

@@ -1,3 +1,4 @@
 # Dataflow Architecture JEV Mapper
 
-Research workspace for architecture-conditioned spatial mapping.
+Standalone spatial mapping experiments. Start with the runnable
+[spatial-mapping-analyzer](spatial-mapping-analyzer/README.md).
