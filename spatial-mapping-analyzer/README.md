@@ -2,7 +2,9 @@
 
 A runnable **passthrough scaffold** for a standalone mapping analyzer. This change
 establishes the contracts and end-to-end orchestration before implementing search,
-fusion, kernel execution, or a learned model. It does not integrate with a compiler.
+fusion, full program lowering, or a learned model. Alongside the mock backend,
+it can execute a generated dummy program on real TT-Sim. It does not integrate
+with a compiler.
 
 ## Run the complete loop
 
@@ -67,11 +69,13 @@ score of 1. Stable ties select the earliest trial; no speedup is claimed.
 | `validator/checks.py` | Input and mapping semantic checks, structured errors |
 | `backends/base.py` | `Backend.run(architecture, program, mapping, workdir)` and report contracts |
 | `backends/mock.py` | Explicit synthetic result, no numerical computation |
-| `backends/tt_sim.py` | Explicitly unsupported TT-Sim adapter placeholder |
+| `backends/tt_sim.py` | Dummy file generation, isolated real simulator invocation and report conversion |
+| `backends/tt_sim_dummy.py` | Fixed RV32I program and mapping-derived dummy input files |
+| `backends/tt_sim_runner.py` | Official Wormhole PCI/BAR ABI, BRISC launch and output verification |
 | `pipeline.py` | Proposal, validation, execution, feedback history and best-result selection |
 | `run_analyzer.py` | CLI entry point |
 | `examples/` | Minimal architecture and matmul/relu/matmul DAG |
-| `tests/test_e2e.py` | CLI and boundary/negative-path tests |
+| `tests/` | Mock CLI, real simulator integration and boundary/negative-path tests |
 | `results/` | Generated run directories (created on demand) |
 
 `pipeline.run(...)` accepts injected Analyzer and Backend implementations. On
@@ -142,41 +146,86 @@ all-failed runs. An unsuccessful run creates no best mapping. Early input errors
 are machine-readable JSON on stderr. Durability is per completed trial, not
 transactional crash recovery; resume is not implemented.
 
-## TT-Sim status
+## Real TT-Sim dummy E2E
 
 The official simulator source is pinned as a Git submodule at
 [`../third_party/ttsim`](../third_party/ttsim). From the repository root, run
 `git submodule update --init --recursive`; see
 [dependency setup and build instructions](../third_party/README.md).
-The submodule supplies upstream code; `backends/tt_sim.py` remains the adapter
-that will connect Mapping IR to an executable workload and report.
+The submodule supplies upstream code; `backends/tt_sim.py` generates dummy input
+files, invokes an isolated runner and converts its verified result into a report.
 
-**This PR does not launch TT-Sim.** The command below records unsupported reports,
-creates no best mapping, and exits 2; it never silently switches to mock:
+Build the pinned single-chip Wormhole library, then run from the analyzer directory:
 
 ```bash
+# From the repository root; Linux with Python and g++ supporting C++20.
+git submodule update --init --recursive
+cd third_party/ttsim
+python make.py src/_out/release_wh/libttsim.so
+cd ../../spatial-mapping-analyzer
+python -m pip install -r requirements.txt
 python run_analyzer.py \
   --arch examples/wormhole.yaml \
   --program examples/matmul_relu_matmul.yaml \
-  --backend tt-sim --iterations 1 --output results/tt-sim-check
+  --backend tt-sim --iterations 3 --output results/tt-sim-demo
 ```
 
-The intended real adapter will lower validated mappings into deterministic
-execution plans, instantiate parameterized TT-Metal kernels, and launch a runner
-in an isolated subprocess with a timeout. Official ttsim execution uses
-`TT_METAL_SIMULATOR=/path/to/libttsim_wh.so`, an accompanying `soc_descriptor.yaml`,
-and typically `TT_METAL_SLOW_DISPATCH_MODE=1` with a built TT-Metal executable.
-There is no official Mapping-YAML ingestion interface. See the
-[official ttsim setup](https://github.com/tenstorrent/ttsim#running-with-tt-metalium)
-and [library API](https://github.com/tenstorrent/ttsim/blob/main/docs/libttsim_api.md).
-Initializing/building the simulator and installing TT-Metal are not required
-to run the mock scaffold.
+The default library path is `third_party/ttsim/src/_out/release_wh/libttsim.so`.
+Override it with `--tt-sim-library /absolute/path/libttsim_wh.so` if needed. The
+runner wall-time limit defaults to 30 seconds per trial (`--tt-sim-timeout`).
+Missing/incompatible libraries, timeouts, simulator failures and bad outputs
+produce errors with no ranking objective; there is no mock fallback. An
+explicit `extensions.target_family: wormhole` is required by this dummy adapter.
+
+The actual execution in each trial is:
+
+1. Preserve the original program/mapping snapshots. Write `dummy.json`, a 32-byte
+   `dummy.bin` containing eight RV32I instructions, and 16-byte `dummy_data.bin`.
+2. Put region count and total allocated core count in the two input words. For
+   the supplied mapping these are 3 and 3. The output word starts at `0xFFFFFFFF`
+   and the completion flag at 0, so loading the files alone cannot pass the test.
+3. Launch `backends/tt_sim_runner.py` in a child process. It loads the official
+   `libttsim.so` via ctypes and verifies the Wormhole PCI device ID.
+4. Use the documented PCI/BAR interface to load SRAM on physical Tensix core
+   (1,1), then release BRISC reset. Clock the simulator until BRISC writes the
+   result and completion flag, or a bounded step budget is exhausted.
+5. Read back and check **6** with completion **1**, save `runner_result.json`, and
+   return the report to the existing feedback/history/best-selection loop.
+
+This runs the actual Wormhole chip simulator, not the upstream generic RV64
+computer simulator. No TT-Metal installation, SoC descriptor, cross compiler or
+modified upstream source is needed for this direct ABI smoke test. The register
+and TLB definitions are tied to the pinned upstream revision. See the
+[official library API](https://github.com/tenstorrent/ttsim/blob/40bb1a2ad6a755279c4628ddc65e30b10721fdef/docs/libttsim_api.md).
+
+**Only the dummy is executed.** The matmul/relu/matmul DAG, fusion, logical core
+allocation and spatial pipeline are not lowered onto hardware yet. Accordingly,
+`report.correctness` stays `not_checked` for the original program, while
+`report.extensions.dummy_correctness` is `passed` for the actual dummy. Report
+extensions record `program_dag_executed: false` and `mapping_lowered: false`.
+
+The report includes the library/firmware/data hashes, actual result, completion
+flag and API step count. A local run completed in 7 API steps; this is a dummy
+execution diagnostic, **not accelerator latency or mapped-DAG cycle count**.
+Hardware performance fields remain null/unsupported. The ranking score remains
+constant `passthrough_cost = 1`, source `synthetic`, so the first successful tied
+mapping is saved as `best_mapping.yaml` without a performance-improvement claim.
+
+Each launched trial additionally saves `invocation.json` (exact argv, directory,
+timeout and library hash), `stdout.log`, `stderr.log`, and `runner_result.json`
+when the child exits normally. A fatal simulator error may prevent that last
+file from being written; the adapter still records failure and preserves logs.
+See [the observed run](docs/tt_sim_dummy_run.md) for the validated output.
+
+Full program execution will require a separate TT-Metal lowering/runner path or
+another supported backend lowering, with tensor reference checks and trustworthy
+performance reporting. Initializing/building TT-Sim remains optional for mock runs.
 
 ## Next implementation steps
 
 1. Add a candidate policy for grouping, legal fusion, and core allocations; keep
    a generator/ranker boundary for cost models that score rather than generate.
-2. Add deterministic TT-Metal lowering, backend capability checks and numerical
+2. Extend the working dummy adapter with deterministic TT-Metal lowering, backend capability checks and numerical
    reference validation. Preserve the original DAG and record the execution plan.
 3. Establish a trustworthy performance objective. Simulator steps, simulator host
    runtime and hardware latency are distinct; validate timing/ranking fidelity
@@ -195,6 +244,12 @@ python -m unittest discover -s tests -v
 The suite covers real CLI subprocess runs, all expected artifacts, feedback
 delivery, DAG preservation, schema drift, malformed mappings, core capacity,
 dependency order, unsupported fusion, shape/edge consistency, backend failure
-recovery, report provenance, stable best selection and unsupported TT-Sim.
-GitHub Actions verifies checkout of the pinned submodule, runs the suite and
-executes the ten-iteration mock demo. It does not build or launch TT-Sim.
+recovery, report provenance and stable best selection. Real simulator tests
+add dummy result verification, changed inputs and isolation of an actual fatal
+simulator error. They skip locally if no library is built; set
+`TT_SIM_TEST_LIBRARY` to test a non-default library. Boundary tests always run.
+
+GitHub Actions verifies checkout of the pinned submodule, builds the real
+Wormhole library, runs all 21 tests (including the real integration tests), then
+executes a ten-iteration mock demo and a three-iteration real dummy E2E. The
+`tt-sim-dummy-e2e` artifact contains the generated files, logs and reports.

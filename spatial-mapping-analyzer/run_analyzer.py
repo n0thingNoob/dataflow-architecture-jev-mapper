@@ -24,6 +24,8 @@ def main(argv=None):
     parser.add_argument("--program", type=Path, required=True)
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--backend", choices=["mock", "tt-sim"], default="mock")
+    parser.add_argument("--tt-sim-library", type=Path, help="Wormhole libttsim.so; defaults to the submodule release build")
+    parser.add_argument("--tt-sim-timeout", type=float, default=30.0, help="Runner wall-time limit per trial, in seconds")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
@@ -37,7 +39,7 @@ def main(argv=None):
             return 2
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         output = args.output or Path(__file__).parent / "results" / f"{stamp}-{uuid4().hex[:8]}"
-        backend = MockBackend() if args.backend == "mock" else TTSimBackend()
+        backend = MockBackend() if args.backend == "mock" else TTSimBackend(args.tt_sim_library, args.tt_sim_timeout)
         summary = run(architecture, program, PassthroughAnalyzer(), backend, args.iterations, output)
     except ValidationError as exc:
         print(json.dumps({"status": "invalid_input", "errors": schema_errors(exc)}), file=sys.stderr)
@@ -54,7 +56,9 @@ def main(argv=None):
     if backend.name == "mock":
         print("Passthrough only: identical candidates, constant synthetic score; hardware cycles unavailable.")
     else:
-        print("TT-Sim adapter is unsupported in this scaffold; no simulator was invoked.")
+        print("TT-Sim mode executes a BRISC dummy only; program DAG lowering and hardware latency remain unavailable.")
+        if summary["status"] != "ok":
+            print("No successful result; inspect each trial's report.json and runner logs.")
     return 0 if summary["status"] == "ok" else 2
 
 

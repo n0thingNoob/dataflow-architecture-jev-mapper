@@ -114,12 +114,14 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(summary["trials"][0]["status"], "error")
         self.assertEqual(summary["best_trial_id"], "trial_0001")
 
-    def test_tt_sim_explicitly_unsupported(self):
-        result = self.cli("--backend", "tt-sim")
+    def test_missing_tt_sim_library_never_falls_back(self):
+        result = self.cli("--backend", "tt-sim", "--tt-sim-library", str(Path(self.temp.name) / "missing.so"))
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("no simulator was invoked", result.stdout)
         summary = json.loads((self.output / "summary.json").read_text())
-        self.assertTrue(all(t["status"] == "unsupported" for t in summary["trials"]))
+        self.assertTrue(all(t["status"] == "error" for t in summary["trials"]))
+        report = json.loads((self.output / "trial_0000/report.json").read_text())
+        self.assertEqual(report["backend"], "tt-sim")
+        self.assertEqual(report["extensions"]["error_code"], "MISSING_SIMULATOR")
         self.assertFalse((self.output / "best_mapping.yaml").exists())
 
     def test_existing_output_refused(self):
