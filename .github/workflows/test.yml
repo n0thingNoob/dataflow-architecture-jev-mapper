@@ -1,0 +1,40 @@
+name: Passthrough E2E
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spatial-mapping-analyzer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Verify pinned TT-Sim checkout
+        working-directory: .
+        run: |
+          test "$(git -C third_party/ttsim rev-parse HEAD)" = "$(git rev-parse HEAD:third_party/ttsim)"
+          test -f third_party/ttsim/make.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Build pinned Wormhole TT-Sim
+        working-directory: third_party/ttsim
+        run: python make.py src/_out/release_wh/libttsim.so
+      - name: Require real simulator integration
+        run: test -f ../third_party/ttsim/src/_out/release_wh/libttsim.so
+      - run: python -m unittest discover -s tests -v
+      - run: python export_schemas.py --output results/schemas
+      - run: python run_analyzer.py --arch examples/wormhole.yaml --program examples/matmul_relu_matmul.yaml --iterations 10 --output results/ci-demo
+      - name: Run real TT-Sim dummy E2E
+        run: python run_analyzer.py --arch examples/wormhole.yaml --program examples/matmul_relu_matmul.yaml --backend tt-sim --iterations 3 --output results/ci-tt-sim
+      - name: Upload real simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tt-sim-dummy-e2e
+          path: |
+            spatial-mapping-analyzer/results/ci-tt-sim/
+            spatial-mapping-analyzer/results/schemas/
+          if-no-files-found: warn
