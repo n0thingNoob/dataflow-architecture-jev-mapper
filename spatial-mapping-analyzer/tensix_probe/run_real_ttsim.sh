@@ -27,7 +27,7 @@ echo "TT_METAL_HOME=$TT_METAL_HOME"
 echo "TT-Metalium config=$CONFIG"
 echo "TT-Sim library=$TTSIM_LIBRARY"
 
-python3 -m pip install -r "$ROOT/requirements.txt"
+/usr/bin/python3 -m pip install -r "$ROOT/requirements.txt"
 
 rm -rf "$BUILD_DIR" "$RESULTS_DIR"
 cmake -S "$ROOT/tensix_probe" -B "$BUILD_DIR" \
@@ -39,7 +39,7 @@ PROBE="$BUILD_DIR/spatial_tensix_probe"
 test -x "$PROBE"
 
 cd "$ROOT"
-python3 run_analyzer.py \
+/usr/bin/python3 run_analyzer.py \
     --backend tensix-probe \
     --arch examples/wormhole_tensix_probe.yaml \
     --program examples/bf16_tile_add.yaml \
@@ -50,7 +50,7 @@ python3 run_analyzer.py \
     --tt-sim-timeout 180 \
     --output "$RESULTS_DIR"
 
-python3 - <<'PY'
+/usr/bin/python3 - <<'PY'
 import json
 from pathlib import Path
 
