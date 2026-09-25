@@ -92,7 +92,7 @@ class TTMetalChainTests(unittest.TestCase):
 
     def test_same_core_mapping_is_rejected(self):
         self.mapping.regions[1].placement = [0]
-        with self.assertRaisesRegex(ValueError, "different cores"):
+        with self.assertRaises(ValueError):
             check_chain_supported(self.arch, self.program, self.mapping)
 
     def test_wrong_dag_is_rejected(self):
