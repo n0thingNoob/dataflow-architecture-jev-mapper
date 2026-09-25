@@ -26,6 +26,8 @@ jobs:
         run: python run_analyzer.py --program examples/gemm_relu_gemm.yaml --iterations 2 --output results/ci-tensor
       - name: Scalar diamond E2E
         run: python run_analyzer.py --program examples/scalar_diamond.yaml --inputs examples/scalar_diamond.inputs.json --parallel --iterations 2 --output results/ci-scalar
+      - name: Candidate search E2E
+        run: python run_analyzer.py --program examples/scalar_diamond.yaml --inputs examples/scalar_diamond.inputs.json --search --candidate-limit 8 --iterations 8 --output results/ci-search
       - uses: actions/upload-artifact@v4
         if: always()
         with:
