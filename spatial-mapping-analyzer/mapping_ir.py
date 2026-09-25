@@ -4,6 +4,8 @@ from pydantic import Field
 
 from specs import Contract, Identifier, PositiveInt, Versioned
 
+LogicalCoreId = Annotated[int, Field(strict=True, ge=0)]
+
 
 class Fusion(Contract):
     kind: Literal["matmul_relu"]
@@ -14,7 +16,7 @@ class Region(Contract):
     id: Identifier
     ops: Annotated[list[Identifier], Field(min_length=1)]
     cores: PositiveInt
-    placement: list[int] | None = None
+    placement: list[LogicalCoreId] | None = None
     fusions: list[Fusion] = Field(default_factory=list)
 
 
