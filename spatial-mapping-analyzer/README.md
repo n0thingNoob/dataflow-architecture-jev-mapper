@@ -36,7 +36,7 @@ python run_analyzer.py \
 - serial / dependency-parallel execution policy
 - 显式 logical-core placement
 
-暂不生成 fusion 或 multi-core region，因为当前 BRISC backend 还不能忠实执行这些 mapping。不要把搜索结果解释为性能最优：objective 仍是固定 synthetic 1，TT-Sim 的 API steps 也不是可信硬件 cycles。
+暂不生成 fusion 或 multi-core region，因为当前 BRISC backend 还不能忠实执行这些 mapping。BRISC 路径现在只做 correctness：不产生 ranking objective，也不输出 `best_mapping.yaml`。TT-Sim 的 API steps 仅作调度诊断，不作为硬件 cycles。
 
 ## 代码阅读顺序
 
@@ -75,7 +75,7 @@ y = left + right
 - `report.json`
 - simulator/debug artifacts
 
-整个 run 保存 `history.jsonl`、`summary.json` 和 `best_mapping.yaml`。
+整个 run 保存 `history.jsonl` 和 `summary.json`；只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
 
 ## 测试
 
