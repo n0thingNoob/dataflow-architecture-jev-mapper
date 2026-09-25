@@ -111,4 +111,6 @@ jobs:
         if: always()
         with:
           name: tensix-real-probe
-          path: spatial-mapping-analyzer/results/ci-tensix/
+          path: |
+            spatial-mapping-analyzer/results/ci-tensix/
+            spatial-mapping-analyzer/results/ci-tensix-chain/

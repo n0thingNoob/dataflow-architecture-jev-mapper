@@ -7,6 +7,25 @@ ROOT="$REPO_ROOT/spatial-mapping-analyzer"
 TTSIM_LIBRARY="${TTSIM_LIBRARY:-$REPO_ROOT/.ci/ttsim/libttsim.so}"
 BUILD_DIR="$ROOT/build/tensix_probe"
 RESULTS_DIR="$ROOT/results/ci-tensix"
+CHAIN_RESULTS="$ROOT/results/ci-tensix-chain"
+
+# The adapter captures subprocess output in each trial directory. Surface it in
+# the job log on failure as well, including failures before summary validation.
+print_failure_logs() {
+    local status=$?
+    if (( status != 0 )); then
+        for result_dir in "$RESULTS_DIR" "$CHAIN_RESULTS"; do
+            for log in "$result_dir"/trial_*/*stderr.log "$result_dir"/trial_*/report.json; do
+                if [[ -f "$log" ]]; then
+                    echo "Failure diagnostics: $log" >&2
+                    tail -n 80 "$log" >&2
+                fi
+            done
+        done
+    fi
+    exit "$status"
+}
+trap print_failure_logs EXIT
 
 if [[ ! -f "$TTSIM_LIBRARY" ]]; then
     echo "missing TT-Sim library: $TTSIM_LIBRARY" >&2
@@ -41,7 +60,7 @@ echo "TT-Sim library=$TTSIM_LIBRARY"
 
 /usr/bin/python3 -m pip install -r "$ROOT/requirements.txt"
 
-rm -rf "$BUILD_DIR" "$RESULTS_DIR"
+rm -rf "$BUILD_DIR" "$RESULTS_DIR" "$CHAIN_RESULTS"
 if [[ -n "${TT_METAL_SOURCE_DIR:-}" ]]; then
     mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/toolchain/wormhole"
     mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/toolchain/blackhole"
@@ -94,7 +113,6 @@ assert len(set(cores)) >= 2, cores
 print("Verified real Tensix placement cores:", cores)
 PY
 
-CHAIN_RESULTS="$ROOT/results/ci-tensix-chain"
 /usr/bin/python3 run_analyzer.py \
     --backend tensix-chain \
     --arch examples/wormhole_tensix_probe.yaml \
