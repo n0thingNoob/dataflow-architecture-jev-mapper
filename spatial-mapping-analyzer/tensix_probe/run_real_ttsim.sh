@@ -17,10 +17,13 @@ if [[ ! -d "$TT_METAL_HOME" ]]; then
     exit 1
 fi
 
-CONFIG="$(find "$TT_METAL_HOME" -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit)"
+if [[ -n "${TT_METALIUM_CONFIG_DIR:-}" ]]; then
+    CONFIG="$(find "$TT_METALIUM_CONFIG_DIR" -maxdepth 1 -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit)"
+else
+    CONFIG="$(find "$TT_METAL_HOME" /usr /opt -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit 2>/dev/null || true)"
+fi
 if [[ -z "$CONFIG" ]]; then
-    echo "TT-Metalium CMake package not found under $TT_METAL_HOME" >&2
-    find "$TT_METAL_HOME" -maxdepth 4 -type f -iname '*metalium*config*.cmake' -print >&2 || true
+    echo "TT-Metalium CMake package not found" >&2
     exit 1
 fi
 
