@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=/work/spatial-mapping-analyzer
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$REPO_ROOT/spatial-mapping-analyzer"
 : "${TT_METAL_HOME:=/tt-metal}"
-TTSIM_LIBRARY=/work/.ci/ttsim/libttsim.so
+TTSIM_LIBRARY="${TTSIM_LIBRARY:-$REPO_ROOT/.ci/ttsim/libttsim.so}"
 BUILD_DIR="$ROOT/build/tensix_probe"
 RESULTS_DIR="$ROOT/results/ci-tensix"
 
@@ -54,7 +55,7 @@ cd "$ROOT"
 import json
 from pathlib import Path
 
-root = Path("/work/spatial-mapping-analyzer/results/ci-tensix")
+root = Path("results/ci-tensix")
 summary = json.loads((root / "summary.json").read_text())
 assert summary["status"] == "ok", summary
 assert len(summary["successful_trial_ids"]) == 4, summary
