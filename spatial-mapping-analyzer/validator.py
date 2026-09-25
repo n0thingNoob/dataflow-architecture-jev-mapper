@@ -81,6 +81,20 @@ def validate_mapping(architecture, program, mapping):
         errors.append(error("DUPLICATE_REGION", "mapping.regions", "Region IDs must be unique"))
     if sum(r.cores for r in mapping.regions) > architecture.available_cores:
         errors.append(error("CORE_CAPACITY", "mapping.regions", "Exclusive core allocations exceed available cores"))
+
+    placements = [r.placement for r in mapping.regions]
+    if any(p is not None for p in placements):
+        if any(p is None for p in placements):
+            errors.append(error("PARTIAL_PLACEMENT", "mapping.regions", "Either every region specifies placement or none do"))
+        else:
+            flat = [core for region in mapping.regions for core in region.placement]
+            if any(len(region.placement) != region.cores for region in mapping.regions):
+                errors.append(error("PLACEMENT_SIZE", "mapping.regions", "Placement must contain one logical core ID per allocated core"))
+            if any(type(core) is not int or core < 0 or core >= architecture.available_cores for core in flat):
+                errors.append(error("PLACEMENT_RANGE", "mapping.regions", "Logical core IDs must be within architecture capacity"))
+            if len(flat) != len(set(flat)):
+                errors.append(error("PLACEMENT_OVERLAP", "mapping.regions", "Exclusive regions cannot share logical cores"))
+
     # Fusion remains a declared extension point, never silently accepted as implemented.
     if any(r.fusions for r in mapping.regions):
         errors.append(error("UNSUPPORTED_FUSION", "mapping.regions", "Passthrough scaffold has no fusion lowering"))
