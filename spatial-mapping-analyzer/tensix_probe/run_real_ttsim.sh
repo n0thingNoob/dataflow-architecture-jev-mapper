@@ -53,10 +53,12 @@ fi
 cmake -S "$ROOT/tensix_probe" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     "${CMAKE_EXTRA_ARGS[@]}"
-cmake --build "$BUILD_DIR" --target spatial_tensix_probe -j2
+cmake --build "$BUILD_DIR" --target spatial_tensix_probe spatial_tensix_chain_probe -j2
 
 PROBE="$BUILD_DIR/spatial_tensix_probe"
+CHAIN_PROBE="$BUILD_DIR/spatial_tensix_chain_probe"
 test -x "$PROBE"
+test -x "$CHAIN_PROBE"
 
 cd "$ROOT"
 /usr/bin/python3 run_analyzer.py \
@@ -90,4 +92,43 @@ for trial_id in summary["successful_trial_ids"]:
 
 assert len(set(cores)) >= 2, cores
 print("Verified real Tensix placement cores:", cores)
+PY
+
+CHAIN_RESULTS="$ROOT/results/ci-tensix-chain"
+/usr/bin/python3 run_analyzer.py \
+    --backend tensix-chain \
+    --arch examples/wormhole_tensix_probe.yaml \
+    --program examples/bf16_two_add_chain.yaml \
+    --search --candidate-limit 4 --iterations 4 \
+    --tt-metal-home "$TT_METAL_HOME" \
+    --tensix-chain-binary "$CHAIN_PROBE" \
+    --tt-sim-library "$TTSIM_LIBRARY" \
+    --tt-sim-timeout 180 \
+    --output "$CHAIN_RESULTS"
+
+/usr/bin/python3 - <<'PY'
+import json
+from pathlib import Path
+
+root = Path("results/ci-tensix-chain")
+summary = json.loads((root / "summary.json").read_text())
+assert summary["status"] == "ok", summary
+assert len(summary["successful_trial_ids"]) == 4, summary
+assert summary["best_trial_id"] is None, summary
+
+pairs = []
+for trial_id in summary["successful_trial_ids"]:
+    report = json.loads((root / trial_id / "report.json").read_text())
+    assert report["status"] == "ok", report
+    assert report["correctness"] == "passed", report
+    assert report["objective"] is None, report
+    ext = report["extensions"]
+    assert ext["intermediate_transport"] == "noc_direct", ext
+    assert ext["intermediate_returned_to_host"] is False, ext
+    producer, consumer = map(tuple, ext["physical_cores"])
+    assert producer != consumer, ext
+    pairs.append((producer, consumer))
+
+assert len(set(pairs)) >= 2, pairs
+print("Verified real two-core Tensix chain placements:", pairs)
 PY
