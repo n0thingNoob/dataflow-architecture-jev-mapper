@@ -107,9 +107,9 @@ int main(int argc, char** argv) {
 
         const auto producer_physical = mesh_device->worker_core_from_logical_core(args.producer);
         const auto consumer_physical = mesh_device->worker_core_from_logical_core(args.consumer);
-        const CoreRangeSet chain_cores({
-            CoreRange(args.producer, args.producer),
-            CoreRange(args.consumer, args.consumer),
+        const tt::tt_metal::CoreRangeSet chain_cores(std::vector<tt::tt_metal::CoreRange>{
+            tt::tt_metal::CoreRange(args.producer, args.producer),
+            tt::tt_metal::CoreRange(args.consumer, args.consumer),
         });
 
         constexpr uint32_t tile_elements = tt::constants::TILE_HW;
@@ -193,15 +193,15 @@ int main(int argc, char** argv) {
             program,
             stage0_sender,
             args.producer,
-            {consumer_physical.x, consumer_physical.y, semaphore});
+            {static_cast<uint32_t>(consumer_physical.x), static_cast<uint32_t>(consumer_physical.y), semaphore});
 
         SetRuntimeArgs(
             program,
             stage1_receiver,
             args.consumer,
             {
-                producer_physical.x,
-                producer_physical.y,
+                static_cast<uint32_t>(producer_physical.x),
+                static_cast<uint32_t>(producer_physical.y),
                 semaphore,
                 static_cast<uint32_t>(c_buffer->address()),
             });
