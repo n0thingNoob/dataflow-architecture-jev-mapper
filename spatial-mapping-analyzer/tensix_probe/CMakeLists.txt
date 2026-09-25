@@ -12,6 +12,9 @@ if(TT_METAL_SOURCE_DIR)
     set(TT_USE_SYSTEM_SFPI ON CACHE BOOL "" FORCE)
     set(CMAKE_COMPILE_WARNING_AS_ERROR OFF CACHE BOOL "" FORCE)
     add_subdirectory("${TT_METAL_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/tt-metal" EXCLUDE_FROM_ALL)
+    # The pinned source's HAL archive can race its object libraries when built
+    # from this external project. Finish both before assembling the archive.
+    add_dependencies(hal_1xx wh_hal bh_hal)
     target_link_libraries(spatial_tensix_probe PUBLIC tt_metal)
 else()
     find_package(TT-Metalium REQUIRED)
