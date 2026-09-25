@@ -42,6 +42,14 @@ echo "TT-Sim library=$TTSIM_LIBRARY"
 /usr/bin/python3 -m pip install -r "$ROOT/requirements.txt"
 
 rm -rf "$BUILD_DIR" "$RESULTS_DIR"
+if [[ -n "${TT_METAL_SOURCE_DIR:-}" ]]; then
+    mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/toolchain/wormhole"
+    mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/toolchain/blackhole"
+    mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/toolchain/quasar"
+    mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/lib/wormhole"
+    mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/lib/blackhole"
+    mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/lib/quasar"
+fi
 cmake -S "$ROOT/tensix_probe" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     "${CMAKE_EXTRA_ARGS[@]}"
