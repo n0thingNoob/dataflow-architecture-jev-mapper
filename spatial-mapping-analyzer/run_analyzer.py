@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--arch", type=Path, default=ROOT / "examples/wormhole.yaml")
     parser.add_argument("--program", type=Path, required=True)
     parser.add_argument("--inputs", type=Path, help="JSON: input name -> flat int32 array; otherwise generate seeded inputs")
-    parser.add_argument("--parallel", action="store_true", help="Passthrough mode: start independent regions together")
+    parser.add_argument("--parallel", action="store_true", help="Passthrough mode: start dependency-ready regions as soon as possible")
     parser.add_argument("--search", action="store_true", help="Enumerate distinct executable mappings instead of passthrough")
     parser.add_argument("--candidate-limit", type=int, default=16, help="Maximum deterministic candidate set in search mode")
     parser.add_argument("--iterations", type=int, default=1)
@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--tt-sim-timeout", type=float, default=30)
     parser.add_argument("--output", type=Path, help="A new directory; existing results are never overwritten")
     args = parser.parse_args()
+
     try:
         if args.search and args.parallel:
             raise ValueError("--parallel is a passthrough option; search mode explores both execution policies")
@@ -36,8 +37,11 @@ def main():
         program = Program.model_validate(read_yaml(args.program))
         inputs = json.loads(args.inputs.read_text()) if args.inputs else None
         backend = TTSimBackend(args.tt_sim_library, args.tt_sim_timeout, inputs, args.seed)
-        analyzer = (EnumeratingAnalyzer(args.candidate_limit) if args.search
-                    else PassthroughAnalyzer(args.parallel))
+        analyzer = (
+            EnumeratingAnalyzer(args.candidate_limit)
+            if args.search
+            else PassthroughAnalyzer(args.parallel)
+        )
         output = args.output or ROOT / "results" / f"run-{uuid4().hex[:12]}"
         summary = run(architecture, program, analyzer, backend, args.iterations, output)
     except InvalidInput as exc:
@@ -50,8 +54,12 @@ def main():
         print(f"Results: {output}")
         for trial in summary["trials"]:
             print(f"{trial['trial_id']}  {trial['status']}")
-        print(f"Best: {summary['best_trial_id'] or 'none'} (constant synthetic cost; no hardware performance claim)")
+        if summary["best_trial_id"]:
+            print(f"Best ranked mapping: {summary['best_trial_id']}")
+        else:
+            print("No ranked best mapping: this backend currently provides correctness only.")
         return 0 if summary["status"] == "ok" else 2
+
     print(json.dumps({"status": "error", "errors": errors}), file=sys.stderr)
     return 2
 
