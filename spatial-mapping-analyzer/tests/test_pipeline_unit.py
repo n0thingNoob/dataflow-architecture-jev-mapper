@@ -38,11 +38,13 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(errors[0]["code"], "SCHEMA_ERROR")
 
     def test_execute_skips_invalid_mapping_without_calling_backend(self):
+        outer = self
+
         class Backend:
             name = "never"
 
             def run(self, *args):
-                self.fail("backend should not execute")
+                outer.fail("backend should not execute")
 
         report = _execute(
             self.arch,
@@ -101,10 +103,30 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(report.status, "error")
         self.assertIn("different objective", report.message)
 
-    def test_run_records_measured_cost_and_selects_lowest(self):
-        class Analyzer(PassthroughAnalyzer):
-            pass
+    def test_success_without_objective_is_still_a_successful_run(self):
+        class Backend:
+            name = "correctness-only"
 
+            def run(inner, arch, program, mapping, directory):
+                return Report(
+                    backend=inner.name,
+                    backend_version="1",
+                    status="ok",
+                    correctness="passed",
+                    mapping_hash=fingerprint(mapping),
+                )
+
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "run"
+            summary = run(
+                self.arch, self.program, PassthroughAnalyzer(), Backend(), 2, output
+            )
+            self.assertEqual(summary["status"], "ok")
+            self.assertEqual(summary["successful_trial_ids"], ["trial_0000", "trial_0001"])
+            self.assertIsNone(summary["best_trial_id"])
+            self.assertFalse((output / "best_mapping.yaml").exists())
+
+    def test_run_records_measured_cost_and_selects_lowest(self):
         class Backend:
             name = "measured-test"
 
@@ -127,10 +149,12 @@ class PipelineUnitTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "run"
-            summary = run(self.arch, self.program, Analyzer(), Backend(), 3, output)
+            summary = run(
+                self.arch, self.program, PassthroughAnalyzer(), Backend(), 3, output
+            )
             self.assertEqual(summary["best_trial_id"], "trial_0001")
-            history = (output / "history.jsonl").read_text().splitlines()
-            self.assertEqual(len(history), 3)
+            self.assertEqual(len(summary["successful_trial_ids"]), 3)
+            self.assertTrue((output / "best_mapping.yaml").exists())
 
     def test_run_rejects_non_positive_iterations(self):
         with tempfile.TemporaryDirectory() as temp:
