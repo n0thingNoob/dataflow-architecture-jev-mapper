@@ -66,8 +66,8 @@ jobs:
       - name: Install GitHub CLI and Python helpers
         run: |
           apt-get update
-          apt-get install -y curl git python3-pip cmake ninja-build
-          python3 -m pip install --break-system-packages pyyaml pydantic
+          apt-get install -y curl git gh python3-pip cmake ninja-build
+          /usr/bin/python3 -m pip install pyyaml pydantic
 
       - name: Fetch TT-Metal pinned Wormhole TT-Sim
         env:
