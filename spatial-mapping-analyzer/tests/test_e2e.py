@@ -52,7 +52,7 @@ class E2ETests(unittest.TestCase):
                     return proposal
             directory = self.workdir / str(index)
             summary = run(self.arch, self.program, Invalid(), Never(), 1, directory)
-            self.assertEqual(summary["status"], "no_valid_result")
+            self.assertEqual(summary["status"], "no_successful_result")
             self.assertEqual(summary["trials"][0]["status"], "skipped")
             self.assertFalse((directory / "best_mapping.yaml").exists())
 
