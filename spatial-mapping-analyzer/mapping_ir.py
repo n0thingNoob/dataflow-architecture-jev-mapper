@@ -14,6 +14,7 @@ class Region(Contract):
     id: Identifier
     ops: Annotated[list[Identifier], Field(min_length=1)]
     cores: PositiveInt
+    placement: list[int] | None = None
     fusions: list[Fusion] = Field(default_factory=list)
 
 
