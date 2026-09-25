@@ -1,7 +1,7 @@
 from collections import Counter
 from graphlib import CycleError
 
-from specs.io import fingerprint
+from specs import fingerprint
 
 
 def error(code, path, message):
@@ -89,5 +89,5 @@ def validate_mapping(architecture, program, mapping):
     positions = {op: (i, j) for i, r in enumerate(mapping.regions) for j, op in enumerate(r.ops)}
     for edge in program.edges:
         if positions[edge.source] >= positions[edge.target]:
-            errors.append(error("DEPENDENCY_ORDER", "mapping.regions", f"{edge.source} must precede {edge.target}; regions are ordered tensor barriers"))
+            errors.append(error("DEPENDENCY_ORDER", "mapping.regions", f"{edge.source} must precede {edge.target} in topological region order"))
     return errors

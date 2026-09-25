@@ -1,10 +1,8 @@
-from pathlib import Path
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
-from mapping_ir.models import Mapping
-from specs.models import Architecture, Contract, Identifier, Program, Versioned
+from specs import Contract, Identifier, Versioned
 
 
 class Objective(Contract):
@@ -56,9 +54,3 @@ class Report(Versioned):
         cost = self.objective
         return self.backend, self.backend_version, cost.name, cost.unit, cost.source
 
-
-class Backend(Protocol):
-    name: str
-
-    def run(self, architecture: Architecture, program: Program, mapping: Mapping,
-            workdir: Path) -> Report: ...

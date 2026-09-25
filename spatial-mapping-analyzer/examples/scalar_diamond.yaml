@@ -1,0 +1,22 @@
+schema_version: '0.1'
+id: scalar_diamond
+tensors:
+  a: {shape: [], dtype: int32}
+  b: {shape: [], dtype: int32}
+  c: {shape: [], dtype: int32}
+  p: {shape: [], dtype: int32}
+  left: {shape: [], dtype: int32}
+  right: {shape: [], dtype: int32}
+  y: {shape: [], dtype: int32}
+inputs: [a, b, c]
+outputs: [y]
+ops:
+  - {id: Producer, op: add, inputs: [a, b], output: p}
+  - {id: Left, op: add, inputs: [p, c], output: left}
+  - {id: Right, op: relu, inputs: [p], output: right}
+  - {id: Join, op: add, inputs: [left, right], output: y}
+edges:
+  - {source: Producer, target: Left, tensor: p, input_index: 0}
+  - {source: Producer, target: Right, tensor: p, input_index: 0}
+  - {source: Left, target: Join, tensor: left, input_index: 0}
+  - {source: Right, target: Join, tensor: right, input_index: 1}

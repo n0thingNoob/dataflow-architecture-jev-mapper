@@ -5,12 +5,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from analyzer.base import Analyzer
-from backends.base import Backend, Report
-from mapping_ir.models import Mapping
-from specs.io import fingerprint, write_json, write_yaml
-from specs.models import Architecture, Program
-from validator.checks import InvalidInput, error, schema_errors, validate_inputs, validate_mapping
+from report import Report
+from mapping_ir import Mapping
+from specs import fingerprint, write_json, write_yaml
+from specs import Architecture, Program
+from validator import InvalidInput, error, schema_errors, validate_inputs, validate_mapping
 
 
 def _propose(architecture, program, analyzer, history):
@@ -47,7 +46,7 @@ def _execute(architecture, program, mapping, backend, directory, errors, objecti
         return Report(**report_fields, status="error", message=str(exc))
 
 
-def run(architecture: Architecture, program: Program, analyzer: Analyzer, backend: Backend,
+def run(architecture: Architecture, program: Program, analyzer, backend,
         iterations: int, output: Path) -> dict:
     errors = validate_inputs(architecture, program)
     if iterations < 1:

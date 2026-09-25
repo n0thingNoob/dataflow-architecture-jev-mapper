@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from specs.models import Contract, Identifier, PositiveInt, Versioned
+from specs import Contract, Identifier, PositiveInt, Versioned
 
 
 class Fusion(Contract):
@@ -21,5 +21,5 @@ class Mapping(Versioned):
     program_id: Identifier
     program_hash: Identifier
     architecture_hash: Identifier
-    execution_policy: Literal["exclusive_cores_tensor_barrier"] = "exclusive_cores_tensor_barrier"
+    execution_policy: Literal["exclusive_cores_tensor_barrier", "exclusive_cores_dependency_barrier"] = "exclusive_cores_tensor_barrier"
     regions: Annotated[list[Region], Field(min_length=1)]

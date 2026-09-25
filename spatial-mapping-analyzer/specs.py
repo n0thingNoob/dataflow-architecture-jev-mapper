@@ -1,6 +1,10 @@
+import hashlib
+import json
 from graphlib import TopologicalSorter
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 Identifier = Annotated[str, Field(min_length=1)]
@@ -34,8 +38,8 @@ class Architecture(Versioned):
 
 
 class Tensor(Contract):
-    shape: Annotated[list[PositiveInt], Field(min_length=1)]
-    dtype: Literal["float32", "bfloat16"]
+    shape: list[PositiveInt]  # [] is a scalar; no implicit [1] conversion.
+    dtype: Literal["float32", "bfloat16", "int32"]
 
 
 class Op(Contract):
@@ -67,3 +71,20 @@ class Program(Versioned):
                         for op in self.ops}
         nodes = {op.id: op for op in self.ops}
         return [nodes[name] for name in TopologicalSorter(dependencies).static_order()]
+
+
+def read_yaml(path: Path):
+    return yaml.safe_load(path.read_text())
+
+
+def write_json(path: Path, value):
+    path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+
+
+def write_yaml(path: Path, value):
+    path.write_text(yaml.safe_dump(value, sort_keys=False))
+
+
+def fingerprint(model):
+    content = json.dumps(model.model_dump(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(content.encode()).hexdigest()
