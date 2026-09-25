@@ -1,5 +1,6 @@
 """Unit tests for the optional TT-Metal Tensix placement backend."""
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -127,6 +128,27 @@ class TTMetalProbeTests(unittest.TestCase):
         )
         self.assertEqual(report.status, "error")
         self.assertEqual(report.extensions["error_code"], "PROBE_ENVIRONMENT")
+
+    @unittest.skipUnless(
+        os.environ.get("TT_METAL_HOME") and os.environ.get("SPATIAL_TENSIX_PROBE_BINARY"),
+        "Set TT_METAL_HOME and SPATIAL_TENSIX_PROBE_BINARY for real Tensix integration",
+    )
+    def test_real_tensix_probe_when_environment_is_available(self):
+        tt_metal_home = Path(os.environ["TT_METAL_HOME"]).resolve()
+        probe = Path(os.environ["SPATIAL_TENSIX_PROBE_BINARY"]).resolve()
+        library = Path(
+            os.environ.get(
+                "TT_SIM_TEST_LIBRARY",
+                str(ROOT.parent / "third_party/ttsim/src/_out/release_wh/libttsim.so"),
+            )
+        ).resolve()
+        mapping = generate_candidates(self.arch, self.program, limit=1)[0]
+        report = TTMetalProbeBackend(
+            tt_metal_home, probe, library, timeout_seconds=120
+        ).run(self.arch, self.program, mapping, self.workdir)
+        self.assertEqual(report.status, "ok", report.message)
+        self.assertEqual(report.correctness, "passed")
+        self.assertEqual(report.extensions["physical_core"], [0, 0])
 
 
 if __name__ == "__main__":
