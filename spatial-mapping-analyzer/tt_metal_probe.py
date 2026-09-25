@@ -129,7 +129,10 @@ class TTMetalProbeBackend:
             {
                 "TT_METAL_HOME": str(self.tt_metal_home),
                 "TT_METAL_SIMULATOR": str(simulator_library),
+                "TT_METAL_SIMULATOR_HOME": str(simulator_library.parent),
                 "TT_METAL_SLOW_DISPATCH_MODE": "1",
+                "TT_METAL_FORCE_JIT_COMPILE": "1",
+                "TT_METAL_DISABLE_SFPLOADMACRO": "1",
             }
         )
         write_json(
