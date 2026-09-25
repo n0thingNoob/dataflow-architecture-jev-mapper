@@ -17,14 +17,22 @@ if [[ ! -d "$TT_METAL_HOME" ]]; then
     exit 1
 fi
 
-if [[ -n "${TT_METALIUM_CONFIG_DIR:-}" ]]; then
-    CONFIG="$(find "$TT_METALIUM_CONFIG_DIR" -maxdepth 1 -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit)"
+CMAKE_EXTRA_ARGS=()
+if [[ -n "${TT_METAL_SOURCE_DIR:-}" ]]; then
+    CMAKE_EXTRA_ARGS+=("-DTT_METAL_SOURCE_DIR=$TT_METAL_SOURCE_DIR")
+    CMAKE_EXTRA_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$TT_METAL_SOURCE_DIR/cmake/x86_64-linux-clang-20-libstdcpp-toolchain.cmake")
+    CONFIG="source-tree"
 else
-    CONFIG="$(find "$TT_METAL_HOME" /usr /opt -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit 2>/dev/null || true)"
-fi
-if [[ -z "$CONFIG" ]]; then
-    echo "TT-Metalium CMake package not found" >&2
-    exit 1
+    if [[ -n "${TT_METALIUM_CONFIG_DIR:-}" ]]; then
+        CONFIG="$(find "$TT_METALIUM_CONFIG_DIR" -maxdepth 1 -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit)"
+    else
+        CONFIG="$(find "$TT_METAL_HOME" /usr /opt -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit 2>/dev/null || true)"
+    fi
+    if [[ -z "$CONFIG" ]]; then
+        echo "TT-Metalium CMake package not found" >&2
+        exit 1
+    fi
+    CMAKE_EXTRA_ARGS+=("-DTT-Metalium_DIR=$(dirname "$CONFIG")")
 fi
 
 echo "TT_METAL_HOME=$TT_METAL_HOME"
@@ -36,7 +44,7 @@ echo "TT-Sim library=$TTSIM_LIBRARY"
 rm -rf "$BUILD_DIR" "$RESULTS_DIR"
 cmake -S "$ROOT/tensix_probe" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
-    "-DTT-Metalium_DIR=$(dirname "$CONFIG")"
+    "${CMAKE_EXTRA_ARGS[@]}"
 cmake --build "$BUILD_DIR" -j2
 
 PROBE="$BUILD_DIR/spatial_tensix_probe"
