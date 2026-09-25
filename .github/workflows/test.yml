@@ -50,3 +50,46 @@ jobs:
         with:
           name: program-e2e
           path: spatial-mapping-analyzer/results/
+
+
+  tensix-real:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/tenstorrent/tt-metal/tt-metalium/ubuntu-22.04-dev-amd64:latest
+    env:
+      TT_METAL_HOME: /tt-metal
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install GitHub CLI and Python helpers
+        run: |
+          apt-get update
+          apt-get install -y curl git python3-pip cmake ninja-build
+          python3 -m pip install --break-system-packages pyyaml pydantic
+
+      - name: Fetch TT-Metal pinned Wormhole TT-Sim
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < "$TT_METAL_HOME/tt_metal/ttsim-version")"
+          test -n "$version"
+          mkdir -p /work/.ci/ttsim
+          gh release download "$version" \
+            --repo tenstorrent/ttsim \
+            --pattern 'libttsim_wh.so' \
+            --dir /work/.ci/ttsim
+          mv /work/.ci/ttsim/libttsim_wh.so /work/.ci/ttsim/libttsim.so
+          cp "$TT_METAL_HOME/tt_metal/soc_descriptors/wormhole_b0_80_arch.yaml" \
+            /work/.ci/ttsim/soc_descriptor.yaml
+
+      - name: Build and run real TT-Metal/TTSim placement probe
+        run: bash spatial-mapping-analyzer/tensix_probe/run_real_ttsim.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tensix-real-probe
+          path: spatial-mapping-analyzer/results/ci-tensix/
