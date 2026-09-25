@@ -59,8 +59,6 @@ jobs:
         shell: bash
     container:
       image: ghcr.io/tenstorrent/tt-metal/tt-metalium/ubuntu-22.04-dev-amd64:latest
-    env:
-      TT_METAL_HOME: /tt-metal
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,12 +70,26 @@ jobs:
           apt-get install -y curl git gh python3-pip cmake ninja-build
           /usr/bin/python3 -m pip install pyyaml pydantic
 
+      - name: Discover TT-Metal installation
+        run: |
+          set -euo pipefail
+          version_file="$(find / -type f -path '*/tt_metal/ttsim-version' -print -quit 2>/dev/null || true)"
+          if [[ -z "$version_file" ]]; then
+            echo "::error::Cannot locate tt_metal/ttsim-version in official TT-Metal image"
+            find / -maxdepth 5 -type f -iname '*metalium*config*.cmake' -print 2>/dev/null || true
+            exit 1
+          fi
+          tt_metal_home="$(dirname "$(dirname "$version_file")")"
+          echo "TT_METAL_HOME=$tt_metal_home" >> "$GITHUB_ENV"
+          echo "TT_METAL_VERSION_FILE=$version_file" >> "$GITHUB_ENV"
+          echo "Discovered TT_METAL_HOME=$tt_metal_home"
+
       - name: Fetch TT-Metal pinned Wormhole TT-Sim
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < "$TT_METAL_HOME/tt_metal/ttsim-version")"
+          version="$(tr -d '[:space:]' < "$TT_METAL_VERSION_FILE")"
           test -n "$version"
           mkdir -p "$GITHUB_WORKSPACE/.ci/ttsim"
           gh release download "$version" \
