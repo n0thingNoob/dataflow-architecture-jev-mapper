@@ -5,10 +5,9 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from report import Report
 from mapping_ir import Mapping
-from specs import fingerprint, write_json, write_yaml
-from specs import Architecture, Program
+from report import Report
+from specs import Architecture, Program, fingerprint, write_json, write_yaml
 from validator import InvalidInput, error, schema_errors, validate_inputs, validate_mapping
 
 
@@ -19,7 +18,7 @@ def _propose(architecture, program, analyzer, history):
         proposal = analyzer.propose_mapping(
             architecture.model_copy(deep=True), program.model_copy(deep=True), deepcopy(history))
         raw = proposal.model_dump() if isinstance(proposal, Mapping) else proposal
-        json.dumps(raw, allow_nan=False)  # Trial history must remain serializable.
+        json.dumps(raw, allow_nan=False)
         mapping = Mapping.model_validate(raw)
         return raw, mapping, validate_mapping(architecture, program, mapping)
     except ValidationError as exc:
@@ -53,8 +52,11 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         errors.append(error("ITERATIONS", "iterations", "Must be positive"))
     if errors:
         raise InvalidInput(errors)
-    output.mkdir(parents=True, exist_ok=False)  # Refuse stale results from an earlier run.
+
+    output.mkdir(parents=True, exist_ok=False)
     history, best, objective_key = [], None, None
+    successful_trials = []
+
     for index in range(iterations):
         trial_id = f"trial_{index:04d}"
         directory = output / trial_id
@@ -62,32 +64,56 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         inputs = {"architecture": architecture.model_dump(), "program": program.model_dump()}
         write_yaml(directory / "arch.yaml", inputs["architecture"])
         write_yaml(directory / "program.yaml", inputs["program"])
+
         raw, mapping, errors = _propose(architecture, program, analyzer, history)
         if raw is not None:
             write_yaml(directory / "mapping.yaml", raw)
         validation = {"valid": not errors, "errors": errors}
         write_json(directory / "validation.json", validation)
+
         report = _execute(architecture, program, mapping, backend, directory, errors, objective_key)
         objective = report.objective
-        trial = {"trial_id": trial_id, **inputs, "mapping": raw, "validation": validation,
-                 "report": report.model_dump(), "objective": objective.model_dump() if objective else None,
-                 "measured_cost": objective.value if objective and objective.source == "measured" else None,
-                 "feedback_trial_ids": [t["trial_id"] for t in history]}
+        trial = {
+            "trial_id": trial_id,
+            **inputs,
+            "mapping": raw,
+            "validation": validation,
+            "report": report.model_dump(),
+            "objective": objective.model_dump() if objective else None,
+            "measured_cost": objective.value if objective and objective.source == "measured" else None,
+            "feedback_trial_ids": [t["trial_id"] for t in history],
+        }
+
+        if report.status == "ok":
+            successful_trials.append(trial_id)
         if objective:
             objective_key = report.objective_key()
             if best is None or objective.value < best["objective"]["value"]:
                 best = trial
+
         write_json(directory / "report.json", trial["report"])
         write_json(directory / "trial.json", trial)
         with (output / "history.jsonl").open("a") as stream:
             stream.write(json.dumps(trial, allow_nan=False) + "\n")
         history.append(trial)
-    summary = {"schema_version": "0.1", "backend": backend.name,
-               "status": "ok" if best else "no_valid_result",
-               "best_trial_id": best["trial_id"] if best else None,
-               "best_objective": best["objective"] if best else None,
-               "trials": [{"trial_id": t["trial_id"], "valid": t["validation"]["valid"],
-                           "status": t["report"]["status"], "objective": t["objective"]} for t in history]}
+
+    summary = {
+        "schema_version": "0.1",
+        "backend": backend.name,
+        "status": "ok" if successful_trials else "no_successful_result",
+        "successful_trial_ids": successful_trials,
+        "best_trial_id": best["trial_id"] if best else None,
+        "best_objective": best["objective"] if best else None,
+        "trials": [
+            {
+                "trial_id": t["trial_id"],
+                "valid": t["validation"]["valid"],
+                "status": t["report"]["status"],
+                "objective": t["objective"],
+            }
+            for t in history
+        ],
+    }
     if best:
         write_yaml(output / "best_mapping.yaml", best["mapping"])
     write_json(output / "summary.json", summary)
