@@ -1,0 +1,15 @@
+schema_version: '0.1'
+id: bf16_two_add_chain
+tensors:
+  a: {shape: [32, 32], dtype: bfloat16}
+  b: {shape: [32, 32], dtype: bfloat16}
+  c: {shape: [32, 32], dtype: bfloat16}
+  t0: {shape: [32, 32], dtype: bfloat16}
+  y: {shape: [32, 32], dtype: bfloat16}
+inputs: [a, b, c]
+outputs: [y]
+ops:
+  - {id: Add0, op: add, inputs: [a, b], output: t0}
+  - {id: Add1, op: add, inputs: [t0, c], output: y}
+edges:
+  - {source: Add0, target: Add1, tensor: t0, input_index: 0}
