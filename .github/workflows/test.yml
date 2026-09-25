@@ -79,14 +79,14 @@ jobs:
           set -euo pipefail
           version="$(tr -d '[:space:]' < "$TT_METAL_HOME/tt_metal/ttsim-version")"
           test -n "$version"
-          mkdir -p /work/.ci/ttsim
+          mkdir -p "$GITHUB_WORKSPACE/.ci/ttsim"
           gh release download "$version" \
             --repo tenstorrent/ttsim \
             --pattern 'libttsim_wh.so' \
-            --dir /work/.ci/ttsim
-          mv /work/.ci/ttsim/libttsim_wh.so /work/.ci/ttsim/libttsim.so
+            --dir "$GITHUB_WORKSPACE/.ci/ttsim"
+          mv "$GITHUB_WORKSPACE/.ci/ttsim/libttsim_wh.so" "$GITHUB_WORKSPACE/.ci/ttsim/libttsim.so"
           cp "$TT_METAL_HOME/tt_metal/soc_descriptors/wormhole_b0_80_arch.yaml" \
-            /work/.ci/ttsim/soc_descriptor.yaml
+            "$GITHUB_WORKSPACE/.ci/ttsim/soc_descriptor.yaml"
 
       - name: Build and run real TT-Metal/TTSim placement probe
         run: bash spatial-mapping-analyzer/tensix_probe/run_real_ttsim.sh
