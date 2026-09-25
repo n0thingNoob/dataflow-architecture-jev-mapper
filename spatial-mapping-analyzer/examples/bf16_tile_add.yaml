@@ -1,0 +1,11 @@
+schema_version: '0.1'
+id: bf16_tile_add
+tensors:
+  a: {shape: [32, 32], dtype: bfloat16}
+  b: {shape: [32, 32], dtype: bfloat16}
+  y: {shape: [32, 32], dtype: bfloat16}
+inputs: [a, b]
+outputs: [y]
+ops:
+  - {id: Add0, op: add, inputs: [a, b], output: y}
+edges: []
