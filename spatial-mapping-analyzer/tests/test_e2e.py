@@ -1,199 +1,230 @@
+"""Numerical and dependency E2E tests against the real upstream simulator."""
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import unittest
-from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
-from analyzer.passthrough import PassthroughAnalyzer
-from backends.base import Report
-from backends.mock import MockBackend
-from mapping_ir.models import Mapping
+from analyzer import PassthroughAnalyzer
 from pipeline import run
-from specs.io import read_yaml
-from specs.models import Program
-from tests.support import ROOT, AnalyzerTestCase
-from validator.checks import validate_inputs, validate_mapping
+from report import Objective, Report
+from specs import Architecture, Program, fingerprint, read_yaml
+from tt_sim import DEFAULT_LIBRARY, TTSimBackend
+from validator import validate_inputs, validate_mapping
+from workload import check_supported, input_values, reference
 
-class PipelineTests(AnalyzerTestCase):
-    def test_cli_full_loop_and_all_artifacts(self):
-        result = self.cli()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("synthetic", result.stdout)
-        summary = json.loads((self.output / "summary.json").read_text())
-        self.assertEqual(summary["best_trial_id"], "trial_0000")
-        self.assertEqual(len(summary["trials"]), 3)
-        history = [json.loads(line) for line in (self.output / "history.jsonl").read_text().splitlines()]
-        for i, trial in enumerate(history):
-            directory = self.output / trial["trial_id"]
-            self.assertEqual(trial["feedback_trial_ids"], [f"trial_{j:04d}" for j in range(i)])
-            self.assertIsNone(trial["measured_cost"])
-            for file in ["arch.yaml", "program.yaml", "mapping.yaml", "validation.json", "report.json", "trial.json"]:
-                self.assertTrue((directory / file).is_file(), file)
-            report = Report.model_validate_json((directory / "report.json").read_text())
-            self.assertEqual(report.correctness, "not_checked")
-            self.assertEqual(report.objective.source, "synthetic")
-            self.assertTrue(all(m.value is None and m.status == "unsupported" for m in report.metrics.values()))
-        best = Mapping.model_validate(read_yaml(self.output / "best_mapping.yaml"))
-        self.assertEqual(best, self.mapping)
+ROOT = Path(__file__).resolve().parents[1]
+LIBRARY = Path(os.environ.get("TT_SIM_TEST_LIBRARY", str(DEFAULT_LIBRARY))).resolve()
 
-    def test_feedback_reaches_analyzer_and_inputs_are_preserved(self):
+
+class E2ETests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.workdir = Path(temp.name)
+        self.output = self.workdir / "run"
+        self.arch = Architecture.model_validate(read_yaml(ROOT / "examples/wormhole.yaml"))
+        self.program = Program.model_validate(read_yaml(ROOT / "examples/scalar_diamond.yaml"))
+        self.inputs = {"a": [-3], "b": [1], "c": [5]}
+        self.mapping = PassthroughAnalyzer(parallel=True).propose_mapping(self.arch, self.program)
+
+    def cli(self, *extra):
+        return subprocess.run([sys.executable, str(ROOT / "run_analyzer.py"),
+                               "--program", str(ROOT / "examples/scalar_diamond.yaml"),
+                               "--output", str(self.output), *extra],
+                              cwd=self.workdir, capture_output=True, text=True, timeout=60)
+
+    def test_invalid_mapping_never_executes(self):
+        class Never:
+            name = "test"
+
+            def run(inner, *args):
+                self.fail("Invalid mapping reached simulator")
+
+        raw = self.mapping.model_dump()
+        raw["regions"][1]["ops"] = ["Producer"]
+        for index, proposal in enumerate([raw, {"regions": "invalid"}]):
+            class Invalid:
+                def propose_mapping(inner, *args):
+                    return proposal
+            directory = self.workdir / str(index)
+            summary = run(self.arch, self.program, Invalid(), Never(), 1, directory)
+            self.assertEqual(summary["status"], "no_valid_result")
+            self.assertEqual(summary["trials"][0]["status"], "skipped")
+            self.assertFalse((directory / "best_mapping.yaml").exists())
+
+    def test_feedback_failure_recovery_and_stable_ranking(self):
         observed = []
-        before = deepcopy(self.program.model_dump())
+        before = self.program.model_dump()
 
         class Spy(PassthroughAnalyzer):
-            def propose_mapping(inner, architecture, program, feedback=None):
-                observed.append(deepcopy(feedback))
-                return super().propose_mapping(architecture, program, feedback)
+            def propose_mapping(inner, arch, program, feedback=None):
+                observed.append(len(feedback))
+                mapping = super().propose_mapping(arch, program, feedback)
+                program.id = "only-the-copy-changes"
+                return mapping
 
-        run(self.arch, self.program, Spy(), MockBackend(), 3, self.output)
-        self.assertEqual([len(x) for x in observed], [0, 1, 2])
-        self.assertEqual(observed[2][0]["report"]["backend"], "mock")
+        class Scores:
+            name = "test"
+            values = iter([None, 3, 1, 1])
+
+            def run(inner, arch, program, mapping, directory):
+                value = next(inner.values)
+                if value is None:
+                    raise RuntimeError("Injected failure")
+                return Report(backend=inner.name, backend_version="test", status="ok",
+                              mapping_hash=fingerprint(mapping),
+                              objective=Objective(name="test", value=value, unit="test", source="synthetic"))
+
+        summary = run(self.arch, self.program, Spy(), Scores(), 4, self.output)
+        self.assertEqual(observed, [0, 1, 2, 3])
         self.assertEqual(self.program.model_dump(), before)
-
-    def test_invalid_mapping_never_calls_backend(self):
-        class Invalid:
-            def propose_mapping(inner, *args):
-                raw = self.mapping.model_dump()
-                raw["regions"][1]["ops"] = ["Matmul0"]
-                return raw
-
-        class MustNotRun(MockBackend):
-            def run(inner, *args):
-                self.fail("Backend was called for an invalid mapping")
-
-        summary = run(self.arch, self.program, Invalid(), MustNotRun(), 2, self.output)
-        self.assertIsNone(summary["best_trial_id"])
-        self.assertFalse((self.output / "best_mapping.yaml").exists())
-        validation = json.loads((self.output / "trial_0000/validation.json").read_text())
-        self.assertIn("OP_COVERAGE", [e["code"] for e in validation["errors"]])
-        Report.model_validate_json((self.output / "trial_0000/report.json").read_text())
-
-    def test_malformed_mapping_recorded(self):
-        class Invalid:
-            def propose_mapping(inner, *args):
-                return {"regions": "not-a-list"}
-        summary = run(self.arch, self.program, Invalid(), MockBackend(), 1, self.output)
-        self.assertEqual(summary["status"], "no_valid_result")
-        validation = json.loads((self.output / "trial_0000/validation.json").read_text())
-        self.assertEqual(validation["errors"][0]["code"], "SCHEMA_ERROR")
-
-    def test_backend_failure_recorded_and_next_trial_runs(self):
-        class Flaky(MockBackend):
-            calls = 0
-
-            def run(inner, *args):
-                inner.calls += 1
-                if inner.calls == 1:
-                    raise RuntimeError("deliberate test failure")
-                return super().run(*args)
-
-        summary = run(self.arch, self.program, PassthroughAnalyzer(), Flaky(), 2, self.output)
         self.assertEqual(summary["trials"][0]["status"], "error")
-        self.assertEqual(summary["best_trial_id"], "trial_0001")
+        self.assertEqual(summary["best_trial_id"], "trial_0002")
 
-    def test_missing_tt_sim_library_never_falls_back(self):
-        result = self.cli("--backend", "tt-sim", "--tt-sim-library", str(Path(self.temp.name) / "missing.so"))
-        self.assertEqual(result.returncode, 2, result.stderr)
-        summary = json.loads((self.output / "summary.json").read_text())
-        self.assertTrue(all(t["status"] == "error" for t in summary["trials"]))
-        report = json.loads((self.output / "trial_0000/report.json").read_text())
-        self.assertEqual(report["backend"], "tt-sim")
-        self.assertEqual(report["extensions"]["error_code"], "MISSING_SIMULATOR")
-        self.assertFalse((self.output / "best_mapping.yaml").exists())
-
-    def test_existing_output_refused(self):
-        self.assertEqual(self.cli().returncode, 0)
-        before = (self.output / "history.jsonl").read_bytes()
-        self.assertEqual(self.cli().returncode, 2)
-        self.assertEqual(before, (self.output / "history.jsonl").read_bytes())
-
-    def test_invalid_iterations_and_bad_yaml_are_clean_errors(self):
-        result = self.cli("--iterations", "0")
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(json.loads(result.stderr)["errors"][0]["code"], "ITERATIONS")
-        malformed = Path(self.temp.name) / "bad.yaml"
-        malformed.write_text("ops: [")
-        result = self.cli("--program", str(malformed))
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("errors", json.loads(result.stderr))
-        self.assertFalse(self.output.exists())
-
-    def test_semantic_validation(self):
-        cases = []
-        bad = self.mapping.model_copy(deep=True)
-        bad.regions[0].cores = 9
-        cases.append((bad, "CORE_CAPACITY"))
-        bad = self.mapping.model_copy(deep=True)
-        bad.regions.reverse()
-        cases.append((bad, "DEPENDENCY_ORDER"))
-        bad = self.mapping.model_copy(deep=True)
-        bad.program_hash = "wrong"
-        cases.append((bad, "INPUT_MISMATCH"))
-        raw = self.mapping.model_dump()
-        raw["regions"][0]["fusions"] = [{"kind": "matmul_relu", "ops": ["Matmul0", "ReLU1"]}]
-        cases.append((Mapping.model_validate(raw), "UNSUPPORTED_FUSION"))
-        for mapping, code in cases:
-            with self.subTest(code=code):
-                self.assertIn(code, [e["code"] for e in validate_mapping(self.arch, self.program, mapping)])
-
-    def test_shape_and_edge_validation(self):
-        bad = self.program.model_copy(deep=True)
-        bad.edges = []
-        self.assertIn("EDGE_MISMATCH", [e["code"] for e in validate_inputs(self.arch, bad)])
-        bad = self.program.model_copy(deep=True)
-        bad.tensors["w0"].shape = [32, 64]
-        self.assertIn("OP_SIGNATURE", [e["code"] for e in validate_inputs(self.arch, bad)])
-
-    def test_program_cycle_rejected_and_unsorted_dag_supported(self):
-        bad = self.program.model_copy(deep=True)
-        bad.ops[0].inputs[0] = "y"
-        self.assertIn("PROGRAM_CYCLE", [e["code"] for e in validate_inputs(self.arch, bad)])
-        reordered = self.program.model_copy(deep=True)
-        reordered.ops.reverse()
-        self.assertEqual(validate_inputs(self.arch, reordered), [])
-        proposal = PassthroughAnalyzer().propose_mapping(self.arch, reordered)
-        self.assertEqual([r.ops[0] for r in proposal.regions], ["Matmul0", "ReLU1", "Matmul2"])
-
-    def test_best_selection_uses_cost_and_stable_ties(self):
-        class Scores(MockBackend):
-            values = iter([3, 1, 1, 2])
-
-            def run(inner, *args):
-                report = super().run(*args)
-                report.objective.value = next(inner.values)
-                return report
-
-        summary = run(self.arch, self.program, PassthroughAnalyzer(), Scores(), 4, self.output)
-        self.assertEqual(summary["best_trial_id"], "trial_0001")
-
-    def test_mismatched_report_cannot_win(self):
-        class Wrong(MockBackend):
-            def run(inner, *args):
-                report = super().run(*args)
-                report.mapping_hash = "another-mapping"
-                return report
-        summary = run(self.arch, self.program, PassthroughAnalyzer(), Wrong(), 1, self.output)
-        self.assertEqual(summary["status"], "no_valid_result")
-        self.assertEqual(summary["trials"][0]["status"], "error")
-
-    def test_add_contract_and_exported_schemas(self):
-        program = Program.model_validate({
-            "id": "add", "tensors": {t: {"shape": [2, 2], "dtype": "float32"} for t in ["a", "b", "c"]},
-            "inputs": ["a", "b"], "outputs": ["c"],
-            "ops": [{"id": "Add", "op": "add", "inputs": ["a", "b"], "output": "c"}], "edges": []})
-        self.assertEqual(validate_inputs(self.arch, program), [])
+    def test_schemas_and_cli_errors(self):
         destination = self.workdir / "schemas"
         result = subprocess.run([sys.executable, str(ROOT / "export_schemas.py"), "--output", str(destination)],
                                 capture_output=True, text=True, timeout=30, cwd=self.workdir)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual({p.name for p in destination.iterdir()},
-                         {f"{name}.schema.json" for name in ("arch", "program", "mapping", "report")})
-        for path in destination.iterdir():
-            schema = json.loads(path.read_text())
-            self.assertEqual(schema["$schema"], "https://json-schema.org/draft/2020-12/schema")
-            self.assertEqual(schema["type"], "object")
+        self.assertEqual({p.stem for p in destination.iterdir()}, {n + ".schema" for n in ["arch", "program", "mapping", "report"]})
+        result = self.cli("--iterations", "0")
+        self.assertEqual(json.loads(result.stderr)["errors"][0]["code"], "ITERATIONS")
+        result = self.cli("--tt-sim-library", str(self.workdir / "missing.so"))
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse((self.output / "best_mapping.yaml").exists())
+        history = (self.output / "history.jsonl").read_bytes()
+        self.assertEqual(self.cli().returncode, 2)  # Existing output is not overwritten.
+        self.assertEqual((self.output / "history.jsonl").read_bytes(), history)
 
+    def test_scalar_contract_and_dependency_checks(self):
+        self.assertEqual(validate_inputs(self.arch, self.program), [])
+        self.assertEqual(validate_mapping(self.arch, self.program, self.mapping), [])
+        self.assertEqual(reference(self.program, self.inputs), {"p": [-2], "left": [3], "right": [0], "y": [3]})
+        self.mapping.regions.reverse()
+        self.assertIn("DEPENDENCY_ORDER", {e["code"] for e in validate_mapping(self.arch, self.program, self.mapping)})
+        self.program.tensors["a"].shape = [1]
+        self.assertIn("OP_SIGNATURE", {e["code"] for e in validate_inputs(self.arch, self.program)})
+        self.program.ops[0].inputs[0] = "y"
+        self.assertIn("PROGRAM_CYCLE", {e["code"] for e in validate_inputs(self.arch, self.program)})
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_input_fixture_and_unsupported_workload_rejected(self):
+        for fixture in [{"a": [1]}, {**self.inputs, "a": [True]}, {**self.inputs, "a": [2**31]}, {**self.inputs, "a": []}]:
+            with self.subTest(fixture=fixture), self.assertRaises(ValueError):
+                input_values(self.program, fixture)
+        for tensor in self.program.tensors.values():
+            tensor.dtype = "float32"
+        mapping = PassthroughAnalyzer().propose_mapping(self.arch, self.program)
+        with patch("tt_sim.subprocess.run") as execute:
+            report = TTSimBackend(LIBRARY).run(self.arch, self.program, mapping, self.workdir)
+        execute.assert_not_called()
+        self.assertEqual(report.status, "unsupported")
+        self.assertIsNone(report.objective)
+
+    def test_resource_limits_and_timeout(self):
+        self.mapping.regions[0].cores = 2
+        with self.assertRaises(ValueError):
+            check_supported(self.arch, self.program, self.mapping)
+        self.mapping.regions[0].cores = 1
+        self.arch.local_memory_bytes_per_core = 4096
+        mapping = PassthroughAnalyzer().propose_mapping(self.arch, self.program)
+        with self.assertRaises(ValueError):
+            check_supported(self.arch, self.program, mapping)
+        self.arch.local_memory_bytes_per_core = 32768
+        fake = self.workdir / "fake.so"
+        fake.write_bytes(b"subprocess is mocked")
+        with patch("tt_sim.subprocess.run", side_effect=subprocess.TimeoutExpired("runner", 1)):
+            report = TTSimBackend(fake, inputs=self.inputs).run(self.arch, self.program, self.mapping, self.workdir)
+        self.assertEqual(report.extensions["error_code"], "SIMULATOR_TIMEOUT")
+        self.assertFalse(report.extensions["program_dag_executed"])
+        self.assertIsNone(report.objective)
+
+    @unittest.skipUnless(LIBRARY.is_file(), "Build Wormhole TT-Sim for real program integration")
+    def test_diamond_parallel_and_serial_execution(self):
+        executions = []
+        for policy in [True, False]:
+            directory = self.workdir / str(policy)
+            summary = run(self.arch, self.program, PassthroughAnalyzer(policy),
+                          TTSimBackend(LIBRARY, inputs=self.inputs), 1, directory)
+            self.assertEqual(summary["status"], "ok")
+            report = json.loads((directory / "trial_0000/report.json").read_text())
+            self.assertEqual(report["correctness"], "passed")
+            execution = report["extensions"]["execution"]
+            self.assertEqual(execution["outputs"], {"y": [3]})
+            executions.append(execution)
+        parallel, serial = executions
+        self.assertEqual(parallel["waves"], [["Producer"], ["Left", "Right"], ["Join"]])
+        trace = {t["op"]: t for t in parallel["trace"]}
+        left, right = trace["Left"], trace["Right"]
+        self.assertNotEqual(left["core"], right["core"])
+        self.assertLess(max(left["start_api_step"], right["start_api_step"]),
+                        min(left["completion_observed_api_step"], right["completion_observed_api_step"]))
+        self.assertGreaterEqual(trace["Join"]["start_api_step"],
+                                max(left["completion_observed_api_step"], right["completion_observed_api_step"]))
+        self.assertTrue(all(len(wave) == 1 for wave in serial["waves"]))
+        self.assertLess(parallel["api_steps"], serial["api_steps"])  # diagnostic only, not hardware speedup
+
+    @unittest.skipUnless(LIBRARY.is_file(), "Build Wormhole TT-Sim for real program integration")
+    def test_changed_inputs_and_int32_overflow(self):
+        for inputs, expected in [({"a": [3], "b": [1], "c": [2]}, 10),
+                                 ({"a": [2**31-1], "b": [1], "c": [-1]}, 2**31-1)]:
+            with self.subTest(inputs=inputs):
+                report = TTSimBackend(LIBRARY, inputs=inputs).run(self.arch, self.program, self.mapping, self.workdir)
+                self.assertEqual(report.correctness, "passed", report.message)
+                self.assertEqual(report.extensions["execution"]["outputs"], {"y": [expected]})
+
+    @unittest.skipUnless(LIBRARY.is_file(), "Build Wormhole TT-Sim for real program integration")
+    def test_rectangular_gemm_known_result(self):
+        program = Program.model_validate(read_yaml(ROOT / "examples/gemm_relu_gemm.yaml"))
+        shapes = {"a": [2, 3], "b": [3, 2], "hidden": [2, 2], "activated": [2, 2], "c": [2, 1], "y": [2, 1]}
+        for name, shape in shapes.items():
+            program.tensors[name].shape = shape
+        inputs = {"a": [-1, -2, 0, 3, -2, 1], "b": [1, 2, 3, 4, 5, 6], "c": [-1, 2]}
+        mapping = PassthroughAnalyzer().propose_mapping(self.arch, program)
+        report = TTSimBackend(LIBRARY, inputs=inputs).run(self.arch, program, mapping, self.workdir)
+        self.assertEqual(report.correctness, "passed", report.message)
+        self.assertEqual(report.extensions["execution"]["tensors"],
+                         {"hidden": [-7, -10, 2, 4], "activated": [0, 0, 2, 4], "y": [0, 6]})
+
+    @unittest.skipUnless(LIBRARY.is_file(), "Build Wormhole TT-Sim for real program integration")
+    def test_tensor_cli_full_loop(self):
+        process = self.cli("--arch", str(ROOT / "examples/wormhole.yaml"),
+                           "--program", str(ROOT / "examples/gemm_relu_gemm.yaml"), "--tt-sim-library", str(LIBRARY), "--iterations", "2", "--seed", "7")
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        history = [json.loads(line) for line in (self.output / "history.jsonl").read_text().splitlines()]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[1]["feedback_trial_ids"], ["trial_0000"])
+        for trial in history:
+            report = trial["report"]
+            self.assertEqual(report["correctness"], "passed")
+            self.assertTrue(report["extensions"]["program_dag_executed"])
+            self.assertEqual(len(report["extensions"]["execution"]["outputs"]["y"]), 1024)
+            self.assertEqual(report["objective"]["source"], "synthetic")
+            self.assertIsNone(trial["measured_cost"])
+            self.assertIsNone(report["metrics"]["total_cycles"]["value"])
+            directory = self.output / trial["trial_id"]
+            for name in ["inputs.json", "reference.json", "correctness.json", "program_execution.json", "op_0000.bin", "invocation.json"]:
+                self.assertTrue((directory / name).is_file())
+        self.assertTrue((self.output / "best_mapping.yaml").is_file())
+
+    @unittest.skipUnless(LIBRARY.is_file(), "Build Wormhole TT-Sim for real program integration")
+    def test_wrong_device_output_cannot_win(self):
+        import workload
+        compile_real = workload.compile_kernel
+
+        def wrong_kernel(op, shapes, count):
+            # Deliberately lower scalar add to relu; reference remains independent.
+            return compile_real("relu" if op == "add" else op, shapes, count)
+
+        with patch("workload.compile_kernel", side_effect=wrong_kernel):
+            report = TTSimBackend(LIBRARY, inputs=self.inputs).run(self.arch, self.program, self.mapping, self.workdir)
+        self.assertEqual(report.correctness, "failed")
+        self.assertEqual(report.status, "error")
+        self.assertIsNone(report.objective)
+        with patch("workload.compile_kernel", return_value=bytes(32)):
+            report = TTSimBackend(LIBRARY, inputs=self.inputs).run(self.arch, self.program, self.mapping, self.workdir)
+        self.assertEqual(report.extensions["error_code"], "SIMULATOR_FAILED")
+        self.assertIsNone(report.objective)  # A fatal simulator exit stays inside the child.

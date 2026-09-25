@@ -3,9 +3,9 @@ import hashlib
 import math
 import random
 
-from backends.rv32_kernels import DONE, MAX_ELEMENTS, compile_kernel
-from specs.io import fingerprint, write_json
-from validator.checks import validate_inputs, validate_mapping
+from kernels import DONE, MAX_ELEMENTS, compile_kernel
+from specs import fingerprint, write_json
+from validator import validate_inputs, validate_mapping
 
 # Physical Wormhole Tensix coordinates: column 5 is a DRAM column.
 CORES = [(x, 1) for x in (1, 2, 3, 4, 6, 7, 8, 9)]

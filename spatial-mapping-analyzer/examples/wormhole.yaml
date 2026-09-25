@@ -1,16 +1,13 @@
-# Logical 8-core budget for a mock demo, NOT an official Wormhole SoC descriptor.
+# Logical subset of eight physical Tensix tiles, executing their BRISC processors.
 schema_version: '0.1'
-id: wormhole-demo-budget
-grid:
-  rows: 2
-  cols: 4
+id: wormhole-brisc-correctness
+grid: {rows: 1, cols: 8}
 available_cores: 8
-local_memory_bytes_per_core: null
-compute_units: [FPU, SFPU]
-network_topology: unspecified
-multicast: null
-bandwidth_bytes_per_cycle: null
-link_latency_cycles: null
+# Conservative harness budget; not a statement of the chip's full SRAM capacity.
+local_memory_bytes_per_core: 32768
+compute_units: [BRISC]
+network_topology: host-mediated
+multicast: false
 extensions:
-  profile_kind: mock_demo
   target_family: wormhole
+  profile_kind: brisc_correctness

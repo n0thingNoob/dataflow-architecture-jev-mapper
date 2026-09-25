@@ -2,4 +2,3 @@ __pycache__/
 *.py[cod]
 .venv/
 spatial-mapping-analyzer/results/
-spatial-mapping-analyzer/specs/schemas/

@@ -1,22 +1,38 @@
 """Real int32 DAG execution with CPU reference verification, no performance claim."""
 import hashlib
 import json
+import math
 import subprocess
+import sys
+from pathlib import Path
 
-from backends.base import Objective, Report, unsupported_metrics
-from backends.program_workload import check_supported, input_values, lower, reference
-from backends.tt_sim import TTSimBackend
-from specs.io import fingerprint, write_json
+from report import Objective, Report, unsupported_metrics
+from specs import fingerprint, write_json
+from workload import check_supported, input_values, lower, reference
+
+ROOT = Path(__file__).resolve().parent
+DEFAULT_LIBRARY = ROOT.parent / "third_party/ttsim/src/_out/release_wh/libttsim.so"
 
 
-class TTSimProgramBackend(TTSimBackend):
+class TTSimBackend:
     name = "tt-sim-program"
-    runner_module = "backends.tt_sim_program_runner"
     manifest_filename = "program_execution.json"
 
     def __init__(self, library=None, timeout_seconds=30, inputs=None, seed=0):
-        super().__init__(library, timeout_seconds)
+        self.library = Path(library).resolve() if library is not None else DEFAULT_LIBRARY
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("TT-Sim timeout must be a finite positive number")
+        self.timeout_seconds = timeout_seconds
         self.inputs, self.seed = inputs, seed
+
+    def _invoke(self, workdir, library_hash):
+        command = [sys.executable, "-m", "simulator", "--library", str(self.library),
+                   "--manifest", str(workdir / self.manifest_filename), "--result", str(workdir / "runner_result.json")]
+        write_json(workdir / "invocation.json", {"argv": command, "cwd": str(ROOT),
+                   "timeout_seconds": self.timeout_seconds, "library_sha256": library_hash})
+        with (workdir / "stdout.log").open("w") as stdout, (workdir / "stderr.log").open("w") as stderr:
+            return subprocess.run(command, cwd=ROOT, stdout=stdout, stderr=stderr,
+                                  timeout=self.timeout_seconds, check=False)
 
     def run(self, architecture, program, mapping, workdir):
         workdir = workdir.resolve()

@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from specs.models import Contract, Identifier, PositiveInt, Versioned
+from specs import Contract, Identifier, PositiveInt, Versioned
 
 
 class Fusion(Contract):

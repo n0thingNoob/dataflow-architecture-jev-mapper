@@ -1,174 +1,71 @@
-# spatial-mapping-analyzer
+# Spatial Mapping Analyzer
 
-Standalone passthrough mapping loop with mock, TT-Sim dummy and real int32 DAG
-backends. The Analyzer preserves the DAG and assigns one core per op. Search,
-fusion and Tensix FPU/SFPU lowering are not implemented; ranking scores remain
-synthetic. This project does not integrate with a compiler.
+当前只有一条执行路径：读入 DAG → 固定 mapping → 验证 → 真实 TT-Sim → CPU 校验 → 保存结果。
+Analyzer 每个 op 分配一个 region、一个 core；暂不搜索最优解，也不做 fusion。
 
-## Quick start
+## 先跑两个例子
 
-Python 3.10+; CI uses 3.12. From the repository root:
-
-```bash
-cd spatial-mapping-analyzer
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python run_analyzer.py --arch examples/wormhole.yaml \
-  --program examples/matmul_relu_matmul.yaml --iterations 10 --backend mock
-```
-
-Each run creates a unique directory under `results/`. Use `--output PATH` for a
-specific **new** directory; existing directories are refused to prevent stale
-results. Mock executes no kernels and returns constant cost 1; ties select the
-first trial. The example is a 64x64 BF16 Matmul → ReLU → Matmul chain.
-
-## Real TT-Sim dummy E2E
-
-Initialize and build the pinned official Wormhole simulator from the repository
-root (g++ with C++20 support is required):
+从仓库根目录初始化并编译 TT-Sim（需要支持 C++20 的 g++）：
 
 ```bash
 git submodule update --init --recursive
 cd third_party/ttsim
 python make.py src/_out/release_wh/libttsim.so
 cd ../../spatial-mapping-analyzer
-python run_analyzer.py --arch examples/wormhole.yaml \
-  --program examples/matmul_relu_matmul.yaml --backend tt-sim --iterations 3
+python -m pip install -r requirements.txt
+
+python run_analyzer.py --program examples/gemm_relu_gemm.yaml
+python run_analyzer.py --program examples/scalar_diamond.yaml \
+  --inputs examples/scalar_diamond.inputs.json --parallel
 ```
 
-The backend generates `dummy.json`, a 32-byte RV32I `dummy.bin`, and
-`dummy_data.bin`. An isolated subprocess loads the real library through its
-PCI/BAR C ABI, starts BRISC on physical core (1,1), and reads back the computed
-result. The example adds region count 3 to allocated-core count 3 and verifies
-**6**, with completion flag 1. Before clocking, the output must still be pending.
-No TT-Metal installation, SoC descriptor or cross compiler is needed for this dummy.
+- Tensor：32×32 int32 的 `Y = ReLU(A @ B) @ C`，默认 seed=0 生成输入。
+- Scalar：`p=a+b; left=p+c; right=ReLU(p); y=left+right`。示例输入得到 `p=-2, left=3, right=0, y=3`。
+- `--parallel` 允许无依赖的 region 同时开始，Join 等待两条分支完成；不加该选项就顺序执行。
+- `--iterations N` 重复完整流程并传递历史反馈；当前 Analyzer 忽略反馈，每次使用相同 mapping 和输入。
 
-The **original program DAG and logical mapping are not executed**. Original-program
-correctness remains `not_checked`; dummy correctness is recorded separately.
-Hardware metrics stay null/unsupported, and selection still uses constant synthetic
-cost 1. The observed seven API steps are a dummy diagnostic, not hardware latency.
+默认架构是 `examples/wormhole.yaml`。结果放到新的 `results/run-*` 目录。
+可用 `--arch`、`--seed`、`--output`、`--tt-sim-library` 和 `--tt-sim-timeout` 覆盖默认值。
+`--inputs` 是名称到扁平 int32 数组的 JSON；矩阵按行排列，scalar 的 shape 为 `[]`，数据数组仍含一个值。
 
-Use `--tt-sim-library PATH` to override the submodule release library and
-`--tt-sim-timeout SECONDS` to change the 30-second per-trial limit. The dummy
-requires `extensions.target_family: wormhole`. Errors never fall back to mock.
-For direct debugging, the child is `python -m backends.tt_sim_runner` from this
-directory; each trial's `invocation.json` records its complete command.
+## 按这个顺序 review
 
-## Contracts and module boundaries
-
-For real tensor/scalar execution, see the program E2E commands below.
-
-| Component | Source of truth / responsibility |
+| 文件 | 要看什么 |
 | --- | --- |
-| Architecture, program | `specs/models.py`: resource budget, tensors, op ports and dependency edges |
-| Mapping IR | `mapping_ir/models.py`: ordered regions, core counts and fusion declarations |
-| Analyzer | `analyzer/base.py`: propose a mapping using architecture, program and trial history |
-| Validator | `validator/checks.py`: semantic checks and structured errors |
-| Backend, report | `backends/base.py`: execution protocol, objectives, metrics and report invariants |
-| TT-Sim dummy | `tt_sim_dummy.py`: shared workload constants, file generation and validation |
-| TT-Sim execution | `tt_sim.py`: subprocess/report handling; `tt_sim_runner.py`: device ABI |
-| Program execution | `tt_sim_program.py`: CPU comparison/report; `program_workload.py`: capability checks, reference and lowering |
-| Program kernels | `rv32_kernels.py`: bounded RV32IM loops; `tt_sim_program_runner.py`: ready waves and device execution |
-| Orchestration | `pipeline.py`: proposal/validation boundary, execution boundary, persistence and ranking |
+| `run_analyzer.py` | 入口：读配置，调用循环 |
+| `pipeline.py` | 主流程：提案、验证、执行、反馈、选 best、保存 |
+| `analyzer.py` | 当前 mapping 规则；以后替换 `propose_mapping(arch, program, feedback)` |
+| `specs.py`、`mapping_ir.py`、`report.py` | 输入、mapping、报告的数据结构 |
+| `validator.py` | op 覆盖、依赖顺序、shape、core 数是否合法 |
+| `tt_sim.py` | 启动模拟器子进程，把结果与 CPU reference 对比 |
 
-Backend filenames in this table are relative to `backends/`. Analyzer, Validator,
-Mapping IR and Backend remain separate. To replace passthrough, implement the
-existing Analyzer or Backend protocol and inject it into `pipeline.run(...)`.
+底层执行只涉及三个辅助文件：`workload.py` 准备输入、reference 和每个 op 的执行描述；
+`kernels.py` 生成 RV32IM 指令；`simulator.py` 通过 PCI/BAR 接口装载程序、推进模拟器、取回结果。
+进程隔离保留，因为 TT-Sim 遇到非法指令会直接退出进程。上游子模块未修改。
 
-The four JSON Schemas are generated from the runtime models, **not hand-maintained
-or committed**. Export them when needed:
+## 看哪些输出
 
-```bash
-python export_schemas.py
-# specs/schemas/{arch,program,mapping,report}.schema.json
-```
+每个 trial 有 `arch.yaml`、`program.yaml`、`mapping.yaml`、`validation.json`、`report.json`。
+`inputs.json` 和 `reference.json` 记录输入及 CPU 预期值；`correctness.json` 给出校验结果。
+`runner_result.json` 中的 `trace` 和 `waves` 记录 core 分配、分支重叠与完成顺序。
+另外保存可重放的执行描述、指令二进制、调用命令及日志。
 
-Contracts use version `0.1`, reject unknown fields and provide a top-level
-`extensions` namespace. Program scope is static 2D matmul, shape-preserving relu
-and non-broadcasting add, with matching float32/BF16/int32 dtypes. Scalars use
-`shape: []`. Edges must match producer/consumer tensor ports exactly.
+总目录有 `history.jsonl`、`summary.json`、`best_mapping.yaml`。非法 mapping 不执行；执行失败的 trial
+不参与 best 选择。已有结果目录不会覆盖。没有可用结果时 CLI 返回 2。
 
-Mapping uses disjoint reserved cores in topological order; total allocation must
-fit the budget. The default `exclusive_cores_tensor_barrier` serializes regions.
-`exclusive_cores_dependency_barrier` allows independent regions to execute together,
-with full tensors available before consumers start. Fusion remains unsupported.
-Architecture examples are logical budgets, not official SoC descriptors. General
-physical placement and tile-streaming feasibility remain future work.
+## 当前范围与检查
 
-## Tensor and scalar program E2E
+实际执行的是 **int32 BRISC kernel**，支持维度不超过 32 的 scalar/vector/matrix、最多八个单 op/core region。
+加法和乘法按 int32 溢出规则处理。数据由 host 转发；尚未接入 Tensix FPU/SFPU 或设备端 NoC 传输。
+CPU reference 检查所有中间结果，预期值不会写入模拟设备。
 
-After building the same Wormhole library, from this directory:
-
-```bash
-python run_analyzer.py --arch examples/wormhole_brisc.yaml \
-  --program examples/gemm_relu_gemm.yaml --backend tt-sim-program \
-  --iterations 1 --seed 0
-python run_analyzer.py --arch examples/wormhole_brisc.yaml \
-  --program examples/scalar_diamond.yaml --inputs examples/scalar_diamond.inputs.json \
-  --backend tt-sim-program --execution-policy exclusive_cores_dependency_barrier \
-  --iterations 1
-```
-
-The tensor task is `Y = ReLU(A @ B) @ C` with 32x32 int32 matrices. Without an
-input fixture, a fixed seed generates values in [-2, 2]; all actual inputs are
-saved. The scalar diamond is `p=a+b; left=p+c; right=ReLU(p); y=left+right`.
-The supplied inputs produce `p=-2, left=3, right=0, y=3`. Input JSON maps tensor
-names to flat, row-major int32 arrays; a scalar has one value. Int32 arithmetic
-wraps modulo 2^32 and ReLU compares the signed result.
-
-Each region gets one BRISC on a distinct physical Tensix tile. Independent ops
-are released before the same clock call; the host waits for the ready wave and
-copies completed outputs into consumer SRAM. Scalar execution traces prove that
-Left and Right overlap and Join starts after both complete. Keeping the default
-tensor-barrier policy runs the same diamond serially for comparison.
-
-The backend emits short RV32IM kernels, runs them on the **unmodified real TT-Sim**,
-and compares every intermediate tensor and output with an independent Python
-reference. Expected values never enter device memory or firmware. Additional
-artifacts are `inputs.json`, `reference.json`, `correctness.json`, per-op binaries,
-`program_execution.json`, and a runner result containing core assignments, waves
-and start/completion observations. The usual feedback/history/best-mapping loop
-also applies; repeated trials intentionally use identical inputs and mappings.
-
-This backend is bounded to int32 scalars/vectors/matrices with dimensions <=32,
-at most eight one-op/one-core regions, and a 16,388-byte local memory footprint.
-It uses fixed physical columns 1,2,3,4,6,7,8,9 at row 1. Wormhole BRISC has no
-floating-point ISA, so float/BF16 workloads are explicitly rejected by this path.
-It verifies program correctness and simulated branch overlap using BRISC, while
-accelerator GEMM/ReLU kernels and device-side NoC transfers remain unimplemented.
-Completion is sampled every API step for scalar waves, every 32 steps for tensor
-waves. These observations exclude host transfers and are **not hardware latency**;
-performance metrics remain unsupported and ranking cost remains synthetic 1.
-
-## Artifacts and failure behavior
-
-Each trial saves input/mapping snapshots, `validation.json`, `report.json` and
-`trial.json`. Errors have `code`, `path`, and `message`. TT-Sim also saves the
-dummy files, `invocation.json`, stdout/stderr logs and the runner result when
-available. Reports record file/library hashes and the scope of execution.
-
-The run saves `history.jsonl`, `summary.json` and, when eligible, `best_mapping.yaml`.
-Completed trials become feedback for the next proposal; the passthrough policy
-deliberately ignores it. Invalid mappings never reach the backend. Plugin failures
-are recorded and later trials continue. Input and filesystem errors stop the run.
-No eligible result means no best mapping and exit 2; success exits 0.
-
-## Maintenance and verification
+API steps 只用于执行记录，不能当硬件 latency。性能指标保持 unsupported，排序分数为固定 synthetic 1，
+并列时选择第一个成功 trial。缺少库或不支持的程序会明确失败，没有 mock 回退。
 
 ```bash
 python -m unittest discover -s tests -v
+python export_schemas.py  # 四份 schema 写入 results/schemas，模型定义是唯一来源
 ```
 
-The tests cover mock/real CLI runs, feedback, input/graph validation, generated
-schema export, ranking, provenance, simulator failure isolation, numerical
-correctness, overflow, corrupted kernels and diamond overlap. Real integration
-tests skip without a built library; `TT_SIM_TEST_LIBRARY` can select another build.
-CI requires the pinned library, runs all tests and all E2Es, and uploads run
-evidence plus the four schemas as the `tt-sim-dummy-e2e` artifact.
-
-Keep schema changes in the models, dummy protocol changes in `tt_sim_dummy.py`,
-and device register changes in the isolated runner. New mapping policies belong in
-`analyzer/`. Tensix FPU/SFPU lowering, device-side transfers and trustworthy
-performance labels are the next backend work; generated schemas, binaries,
-results and logs should stay out of Git.
+测试集中在 `tests/test_e2e.py`。本地未编译库时会跳过真实执行测试；CI 强制编译并运行两个例子，上传结果和 schema。
+旧 `--backend` / `--execution-policy` 选项已删除；改用默认真实执行和 `--parallel`。

@@ -1,76 +1,53 @@
-#!/usr/bin/env python3
+"""CLI: load inputs, select the fixed mapping policy, run the loop."""
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import yaml
 from pydantic import ValidationError
 
-from analyzer.passthrough import PassthroughAnalyzer
-from backends.mock import MockBackend
-from backends.tt_sim import TTSimBackend
-from backends.tt_sim_program import TTSimProgramBackend
+from analyzer import PassthroughAnalyzer
 from pipeline import run
-from specs.io import read_yaml
-from specs.models import Architecture, Program
-from validator.checks import InvalidInput, error, schema_errors
+from specs import Architecture, Program, read_yaml
+from tt_sim import ROOT, TTSimBackend
+from validator import InvalidInput, error, schema_errors
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="Standalone passthrough mapping loop; mock by default")
-    parser.add_argument("--arch", type=Path, required=True)
+def main():
+    parser = argparse.ArgumentParser(description="Run a tensor/scalar DAG on real TT-Sim")
+    parser.add_argument("--arch", type=Path, default=ROOT / "examples/wormhole.yaml")
     parser.add_argument("--program", type=Path, required=True)
-    parser.add_argument("--iterations", type=int, default=10)
-    parser.add_argument("--backend", choices=["mock", "tt-sim", "tt-sim-program"], default="mock")
-    parser.add_argument("--execution-policy", choices=["exclusive_cores_tensor_barrier", "exclusive_cores_dependency_barrier"],
-                        default="exclusive_cores_tensor_barrier")
-    parser.add_argument("--inputs", type=Path, help="Program backend: JSON input name -> flat int32 array")
-    parser.add_argument("--seed", type=int, default=0, help="Program backend: seed for small integer inputs when --inputs is omitted")
-    parser.add_argument("--tt-sim-library", type=Path, help="Wormhole libttsim.so; defaults to the submodule release build")
-    parser.add_argument("--tt-sim-timeout", type=float, default=30.0, help="Runner wall-time limit per trial, in seconds")
-    parser.add_argument("--output", type=Path)
-    args = parser.parse_args(argv)
+    parser.add_argument("--inputs", type=Path, help="JSON: input name -> flat int32 array; otherwise generate seeded inputs")
+    parser.add_argument("--parallel", action="store_true", help="Start independent regions together")
+    parser.add_argument("--iterations", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--tt-sim-library", type=Path)
+    parser.add_argument("--tt-sim-timeout", type=float, default=30)
+    parser.add_argument("--output", type=Path, help="A new directory; existing results are never overwritten")
+    args = parser.parse_args()
     try:
         architecture = Architecture.model_validate(read_yaml(args.arch))
         program = Program.model_validate(read_yaml(args.program))
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        output = args.output or Path(__file__).parent / "results" / f"{stamp}-{uuid4().hex[:8]}"
-        if args.inputs and args.backend != "tt-sim-program":
-            raise ValueError("--inputs requires --backend tt-sim-program")
-        if args.backend == "tt-sim-program":
-            inputs = json.loads(args.inputs.read_text()) if args.inputs else None
-            backend = TTSimProgramBackend(args.tt_sim_library, args.tt_sim_timeout, inputs, args.seed)
-        else:
-            backend = MockBackend() if args.backend == "mock" else TTSimBackend(args.tt_sim_library, args.tt_sim_timeout)
-        analyzer = PassthroughAnalyzer(args.execution_policy)
-        summary = run(architecture, program, analyzer, backend, args.iterations, output)
+        inputs = json.loads(args.inputs.read_text()) if args.inputs else None
+        backend = TTSimBackend(args.tt_sim_library, args.tt_sim_timeout, inputs, args.seed)
+        output = args.output or ROOT / "results" / f"run-{uuid4().hex[:12]}"
+        summary = run(architecture, program, PassthroughAnalyzer(args.parallel), backend, args.iterations, output)
     except InvalidInput as exc:
-        print(json.dumps({"status": "invalid_input", "errors": exc.errors}), file=sys.stderr)
-        return 2
+        errors = exc.errors
     except ValidationError as exc:
-        print(json.dumps({"status": "invalid_input", "errors": schema_errors(exc)}), file=sys.stderr)
-        return 2
+        errors = schema_errors(exc)
     except (OSError, ValueError, yaml.YAMLError) as exc:
-        print(json.dumps({"status": "error", "errors": [error("RUN_ERROR", "run", str(exc))]}), file=sys.stderr)
-        return 2
-    print(f"Backend: {backend.name}; output: {output}")
-    for trial in summary["trials"]:
-        objective = trial["objective"]
-        cost = f"{objective['value']:g} {objective['unit']} ({objective['source']})" if objective else "unavailable"
-        print(f"{trial['trial_id']}  {trial['status']}  cost={cost}")
-    print(f"Best: {summary['best_trial_id'] or 'none'}")
-    if backend.name == "mock":
-        print("Passthrough only: identical candidates, constant synthetic score; hardware cycles unavailable.")
-    elif backend.name == "tt-sim-program":
-        print("Int32 DAG backend: BRISC execution with CPU reference verification; hardware performance unavailable.")
+        errors = [error("RUN_ERROR", "run", str(exc))]
     else:
-        print("TT-Sim mode executes a BRISC dummy only; program DAG lowering and hardware latency remain unavailable.")
-    if summary["status"] != "ok":
-        print("No successful result; inspect each trial's report.json and runner logs.")
-    return 0 if summary["status"] == "ok" else 2
+        print(f"Results: {output}")
+        for trial in summary["trials"]:
+            print(f"{trial['trial_id']}  {trial['status']}")
+        print(f"Best: {summary['best_trial_id'] or 'none'} (constant synthetic cost; no hardware performance claim)")
+        return 0 if summary["status"] == "ok" else 2
+    print(json.dumps({"status": "error", "errors": errors}), file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

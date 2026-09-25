@@ -1,5 +1,5 @@
-from mapping_ir.models import Mapping, Region
-from specs.io import fingerprint
+from mapping_ir import Mapping, Region
+from specs import fingerprint
 
 
 class PassthroughAnalyzer:
@@ -9,8 +9,9 @@ class PassthroughAnalyzer:
     Repeated trials produce identical mappings; no optimization is claimed.
     """
 
-    def __init__(self, execution_policy="exclusive_cores_tensor_barrier"):
-        self.execution_policy = execution_policy
+    def __init__(self, parallel=False):
+        self.execution_policy = ("exclusive_cores_dependency_barrier" if parallel
+                                 else "exclusive_cores_tensor_barrier")
 
     def propose_mapping(self, architecture, program, feedback=None):
         return Mapping(

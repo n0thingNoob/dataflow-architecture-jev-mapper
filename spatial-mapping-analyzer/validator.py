@@ -1,7 +1,7 @@
 from collections import Counter
 from graphlib import CycleError
 
-from specs.io import fingerprint
+from specs import fingerprint
 
 
 def error(code, path, message):
