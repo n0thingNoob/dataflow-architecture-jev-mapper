@@ -71,7 +71,8 @@ def lower(program, mapping, inputs, directory):
         firmware = compile_kernel(op.op, [program.tensors[t].shape for t in op.inputs], count)
         filename = f"op_{index:04d}.bin"
         (directory / filename).write_bytes(firmware)
-        operations.append({"id": op.id, "region": region.id, "core": CORES[index],
+        logical_core = region.placement[0] if region.placement else index
+        operations.append({"id": op.id, "region": region.id, "core": CORES[logical_core],
                            "inputs": op.inputs, "output": op.output, "elements": count,
                            "firmware": filename, "firmware_sha256": hashlib.sha256(firmware).hexdigest()})
     manifest = {"schema_version": "0.1", "mapping_hash": fingerprint(mapping),
