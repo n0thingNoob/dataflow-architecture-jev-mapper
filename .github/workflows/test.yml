@@ -58,7 +58,7 @@ jobs:
       run:
         shell: bash
     container:
-      image: ghcr.io/tenstorrent/tt-metal/tt-metalium/ubuntu-22.04-dev-amd64:latest
+      image: ghcr.io/tenstorrent/tt-metal/tt-metalium-ubuntu-22.04-release-amd64:latest-rc
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,26 +70,31 @@ jobs:
           apt-get install -y curl git gh python3-pip cmake ninja-build
           /usr/bin/python3 -m pip install pyyaml pydantic
 
-      - name: Discover TT-Metal installation
+      - name: Discover installed TT-Metalium
         run: |
           set -euo pipefail
-          version_file="$(find / -type f -path '*/tt_metal/ttsim-version' -print -quit 2>/dev/null || true)"
-          if [[ -z "$version_file" ]]; then
-            echo "::error::Cannot locate tt_metal/ttsim-version in official TT-Metal image"
-            find / -maxdepth 5 -type f -iname '*metalium*config*.cmake' -print 2>/dev/null || true
+          config="$(find /usr /opt -type f \( -iname 'tt-metalium-config.cmake' -o -iname 'TT-MetaliumConfig.cmake' \) -print -quit 2>/dev/null || true)"
+          if [[ -z "$config" ]]; then
+            echo "::error::TT-Metalium CMake package is missing from the official release image"
+            find /usr /opt -maxdepth 7 -type f -iname '*metalium*' -print 2>/dev/null | head -100 || true
             exit 1
           fi
-          tt_metal_home="$(dirname "$(dirname "$version_file")")"
+          tt_metal_home="$(find /usr /opt -type d -path '*/tt_metal/programming_examples' -print -quit 2>/dev/null | sed 's#/tt_metal/programming_examples##')"
+          if [[ -z "$tt_metal_home" ]]; then
+            echo "::error::TT-Metal programming example sources are missing from the release image"
+            exit 1
+          fi
           echo "TT_METAL_HOME=$tt_metal_home" >> "$GITHUB_ENV"
-          echo "TT_METAL_VERSION_FILE=$version_file" >> "$GITHUB_ENV"
+          echo "TT_METALIUM_CONFIG_DIR=$(dirname "$config")" >> "$GITHUB_ENV"
           echo "Discovered TT_METAL_HOME=$tt_metal_home"
+          echo "Discovered Metalium CMake config=$config"
 
-      - name: Fetch TT-Metal pinned Wormhole TT-Sim
+      - name: Fetch validated Wormhole TT-Sim
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < "$TT_METAL_VERSION_FILE")"
+          version="v1.5.5"
           test -n "$version"
           mkdir -p "$GITHUB_WORKSPACE/.ci/ttsim"
           gh release download "$version" \
