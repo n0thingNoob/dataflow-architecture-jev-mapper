@@ -1,0 +1,11 @@
+schema_version: '0.1'
+id: wormhole-tensix-probe
+grid: {rows: 2, cols: 2}
+available_cores: 4
+local_memory_bytes_per_core: 1048576
+compute_units: [TENSIX_FPU, TENSIX_SFPU]
+network_topology: wormhole-noc
+multicast: true
+extensions:
+  target_family: wormhole
+  profile_kind: tensix_placement_probe
