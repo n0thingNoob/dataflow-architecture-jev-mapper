@@ -45,7 +45,7 @@ rm -rf "$BUILD_DIR" "$RESULTS_DIR"
 cmake -S "$ROOT/tensix_probe" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     "${CMAKE_EXTRA_ARGS[@]}"
-cmake --build "$BUILD_DIR" -j2
+cmake --build "$BUILD_DIR" --target spatial_tensix_probe -j2
 
 PROBE="$BUILD_DIR/spatial_tensix_probe"
 test -x "$PROBE"
