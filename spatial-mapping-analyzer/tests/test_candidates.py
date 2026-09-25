@@ -2,10 +2,14 @@
 import unittest
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from analyzer import EnumeratingAnalyzer, PassthroughAnalyzer
 from candidate_generator import _placement_rotations, _topological_orders, generate_candidates
+from mapping_ir import Mapping
 from specs import Architecture, Program, fingerprint, read_yaml
 from validator import validate_mapping
+from workload import check_supported
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,6 +79,15 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "positive"):
             EnumeratingAnalyzer(0)
 
+    def test_placement_schema_rejects_bool_float_and_string(self):
+        raw = generate_candidates(self.arch, self.program, limit=1)[0].model_dump()
+        for bad in [False, 0.0, "0"]:
+            with self.subTest(bad=bad):
+                candidate = {**raw, "regions": [dict(region) for region in raw["regions"]]}
+                candidate["regions"][0]["placement"] = [bad]
+                with self.assertRaises(ValidationError):
+                    Mapping.model_validate(candidate)
+
     def test_invalid_placements_are_rejected(self):
         mapping = generate_candidates(self.arch, self.program, limit=1)[0]
         mapping.regions[1].placement = list(mapping.regions[0].placement)
@@ -103,6 +116,14 @@ class CandidateTests(unittest.TestCase):
             "PLACEMENT_SIZE",
             {item["code"] for item in validate_mapping(self.arch, self.program, mapping)},
         )
+
+    def test_backend_rejects_architecture_larger_than_harness_capacity(self):
+        large_arch = self.arch.model_copy(deep=True)
+        large_arch.grid.cols = 9
+        large_arch.available_cores = 9
+        mapping = PassthroughAnalyzer().propose_mapping(large_arch, self.program)
+        with self.assertRaisesRegex(ValueError, "at most 8 logical cores"):
+            check_supported(large_arch, self.program, mapping)
 
 
 if __name__ == "__main__":
