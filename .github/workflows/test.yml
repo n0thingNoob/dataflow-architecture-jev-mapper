@@ -31,7 +31,7 @@ jobs:
 
       - name: Unit and integration tests with coverage
         run: |
-          coverage run --branch             --source=analyzer,candidate_generator,mapping_ir,pipeline,report,specs,tt_metal_probe,validator,workload             -m unittest discover -s tests -v
+          coverage run --branch             --source=analyzer,candidate_generator,mapping_ir,pipeline,report,specs,tt_metal_chain,tt_metal_probe,validator,workload             -m unittest discover -s tests -v
           coverage report --show-missing --fail-under=75
 
       - run: python export_schemas.py
