@@ -202,13 +202,13 @@ class E2ETests(unittest.TestCase):
             self.assertEqual(report["correctness"], "passed")
             self.assertTrue(report["extensions"]["program_dag_executed"])
             self.assertEqual(len(report["extensions"]["execution"]["outputs"]["y"]), 1024)
-            self.assertEqual(report["objective"]["source"], "synthetic")
+            self.assertIsNone(report["objective"])
             self.assertIsNone(trial["measured_cost"])
             self.assertIsNone(report["metrics"]["total_cycles"]["value"])
             directory = self.output / trial["trial_id"]
             for name in ["inputs.json", "reference.json", "correctness.json", "program_execution.json", "op_0000.bin", "invocation.json"]:
                 self.assertTrue((directory / name).is_file())
-        self.assertTrue((self.output / "best_mapping.yaml").is_file())
+        self.assertFalse((self.output / "best_mapping.yaml").exists())
 
     @unittest.skipUnless(LIBRARY.is_file(), "Build Wormhole TT-Sim for real program integration")
     def test_wrong_device_output_cannot_win(self):
