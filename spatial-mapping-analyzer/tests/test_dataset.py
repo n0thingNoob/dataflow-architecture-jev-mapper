@@ -190,9 +190,7 @@ class DatasetTests(unittest.TestCase):
 
             history_path = modified / "history.jsonl"
             raw = json.loads(history_path.read_text())
-            raw["objective"]["value"] = 99
             raw["report"]["objective"]["value"] = 99
-            raw["measured_cost"] = 99
             history_path.write_text(json.dumps(raw) + "\n")
 
             with self.assertRaisesRegex(
