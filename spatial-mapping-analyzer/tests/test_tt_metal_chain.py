@@ -59,6 +59,19 @@ class TTMetalChainTests(unittest.TestCase):
             )
         return report, run
 
+    def test_search_contract_only_varies_effective_placement(self):
+        backend = self.backend()
+        self.assertFalse(backend.search_capabilities.topological_order)
+        self.assertFalse(backend.search_capabilities.execution_policy)
+        self.assertTrue(backend.search_capabilities.placement)
+
+        first = backend.execution_signature(self.arch, self.program, self.mapping)
+        moved = self.mapping.model_copy(deep=True)
+        moved.regions[0].placement = [1]
+        moved.regions[1].placement = [2]
+        second = backend.execution_signature(self.arch, self.program, moved)
+        self.assertNotEqual(first, second)
+
     def test_chain_contract_extracts_two_distinct_stages(self):
         first, second, logical, coords = check_chain_supported(
             self.arch, self.program, self.mapping
