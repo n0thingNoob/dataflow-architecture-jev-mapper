@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from analyzer import PassthroughAnalyzer
 from backend_contract import ObservedExecutionIdentity
 from pipeline import _execute, _propose, run
@@ -126,6 +128,22 @@ class PipelineUnitTests(unittest.TestCase):
             self.assertEqual(summary["successful_trial_ids"], ["trial_0000", "trial_0001"])
             self.assertIsNone(summary["best_trial_id"])
             self.assertFalse((output / "best_mapping.yaml").exists())
+
+    def test_measured_report_requires_execution_and_measurement_context(self):
+        with self.assertRaises(ValidationError):
+            Report(
+                backend="measured-test",
+                backend_version="1",
+                status="ok",
+                correctness="passed",
+                mapping_hash=fingerprint(self.mapping),
+                objective=Objective(
+                    name="latency",
+                    value=1,
+                    unit="ns",
+                    source="measured",
+                ),
+            )
 
     def test_run_records_measured_cost_and_selects_lowest(self):
         class Backend:
