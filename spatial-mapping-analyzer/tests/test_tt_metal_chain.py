@@ -124,6 +124,16 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertIn("--consumer-x", command)
         self.assertIn("--kernel-root", command)
 
+    def test_device_runtime_requires_explicit_tt_metal_revision(self):
+        with self.assertRaisesRegex(ValueError, "revision"):
+            TTMetalChainBackend(
+                self.tt_metal_home,
+                self.probe,
+                self.library,
+                timeout_seconds=5,
+                runtime="device",
+            )
+
     def test_device_runtime_exposes_measured_profiler_objective(self):
         result = {
             "passed": True,
