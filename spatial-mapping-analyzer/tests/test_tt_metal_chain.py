@@ -175,6 +175,10 @@ class TTMetalChainTests(unittest.TestCase):
             report.measurement_context.implementation_revision,
             "038c8bbd192aa56a8ffaf6f7010f46d0b99eeca0",
         )
+        self.assertIn(
+            "custom_kernel_bundle_sha256",
+            report.measurement_context.artifacts,
+        )
         self.assertEqual(
             report.extensions["measurement_source"],
             "tt_metal_device_profiler",
