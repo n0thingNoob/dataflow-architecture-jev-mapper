@@ -34,11 +34,8 @@ def _requested_execution_signature(
 ):
     if errors or mapping is None:
         return None, errors
-    signature = getattr(backend, "candidate_execution_signature", None)
-    if signature is None:
-        return None, errors
     try:
-        value = signature(
+        value = backend.candidate_execution_signature(
             architecture.model_copy(deep=True),
             program.model_copy(deep=True),
             mapping.model_copy(deep=True),
@@ -58,7 +55,7 @@ def _requested_execution_signature(
 def _execute(architecture, program, mapping, backend, directory, errors, objective_key):
     report_fields = {
         "backend": backend.name,
-        "backend_version": getattr(backend, "backend_version", "unknown"),
+        "backend_version": backend.backend_version,
         "mapping_hash": (
             fingerprint(mapping) if mapping is not None else "unavailable"
         ),
@@ -132,8 +129,6 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
             "requested_execution_signature": requested_execution_signature,
             "validation": validation,
             "report": report.model_dump(),
-            "objective": objective.model_dump() if objective else None,
-            "measured_cost": objective.value if objective and objective.source == "measured" else None,
             "feedback_trial_ids": [t["trial_id"] for t in history],
         }
 
@@ -141,7 +136,7 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
             successful_trials.append(trial_id)
         if objective:
             objective_key = report.objective_key()
-            if best is None or objective.value < best["objective"]["value"]:
+            if best is None or objective.value < best["report"]["objective"]["value"]:
                 best = trial
 
         write_json(directory / "report.json", trial["report"])
@@ -157,13 +152,13 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         "status": "ok" if successful_trials else "no_successful_result",
         "successful_trial_ids": successful_trials,
         "best_trial_id": best["trial_id"] if best else None,
-        "best_objective": best["objective"] if best else None,
+        "best_objective": best["report"]["objective"] if best else None,
         "trials": [
             {
                 "trial_id": t["trial_id"],
                 "valid": t["validation"]["valid"],
                 "status": t["report"]["status"],
-                "objective": t["objective"],
+                "objective": t["report"]["objective"],
             }
             for t in history
         ],
