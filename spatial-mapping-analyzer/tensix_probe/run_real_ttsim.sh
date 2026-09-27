@@ -82,6 +82,7 @@ test -x "$CHAIN_PROBE"
 cd "$ROOT"
 /usr/bin/python3 run_analyzer.py \
     --backend tensix-probe \
+    --tensix-runtime ttsim \
     --arch examples/wormhole_tensix_probe.yaml \
     --program examples/bf16_tile_add.yaml \
     --search --candidate-limit 4 --iterations 4 \
@@ -115,6 +116,7 @@ PY
 
 /usr/bin/python3 run_analyzer.py \
     --backend tensix-chain \
+    --tensix-runtime ttsim \
     --arch examples/wormhole_tensix_probe.yaml \
     --program examples/bf16_two_add_chain.yaml \
     --search --candidate-limit 4 --iterations 4 \
@@ -141,6 +143,8 @@ for trial_id in summary["successful_trial_ids"]:
     assert report["correctness"] == "passed", report
     assert report["objective"] is None, report
     ext = report["extensions"]
+    assert ext["runtime"] == "ttsim", ext
+    assert ext["measurement_source"] == "unavailable", ext
     assert ext["intermediate_transport"] == "noc_direct", ext
     assert ext["intermediate_returned_to_host"] is False, ext
     producer, consumer = map(tuple, ext["physical_cores"])
