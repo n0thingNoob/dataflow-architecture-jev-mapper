@@ -20,6 +20,7 @@ class MeasurementContext(Contract):
     analysis: Identifier
     implementation_revision: Identifier
     executable_sha256: Identifier
+    artifacts: dict[str, Identifier] = Field(default_factory=dict)
     configuration: dict[str, Any] = Field(default_factory=dict)
 
 
