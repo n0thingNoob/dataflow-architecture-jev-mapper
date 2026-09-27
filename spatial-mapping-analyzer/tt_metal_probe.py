@@ -55,6 +55,9 @@ def check_probe_supported(architecture, program, mapping):
 
 class TTMetalProbeBackend:
     name = "tt-metal-tensix-probe"
+    backend_version = "bf16-add-v1"
+    compute_path = "Tensix via TT-Metal"
+    probe_label = "Tensix probe"
 
     def __init__(
         self,
@@ -73,11 +76,11 @@ class TTMetalProbeBackend:
     def _failure(self, mapping, code, message, status="error"):
         return Report(
             backend=self.name,
-            backend_version="bf16-add-v1",
+            backend_version=self.backend_version,
             status=status,
             mapping_hash=fingerprint(mapping),
             message=message,
-            extensions={"error_code": code, "compute_path": "Tensix via TT-Metal"},
+            extensions={"error_code": code, "compute_path": self.compute_path},
         )
 
     def _prepare_simulator_directory(self, workdir):
@@ -98,32 +101,20 @@ class TTMetalProbeBackend:
         shutil.copy2(descriptor, simulator_dir / "soc_descriptor.yaml")
         return simulator_library
 
-    def run(self, architecture, program, mapping, workdir):
-        workdir = workdir.resolve()
-        try:
-            core_x, core_y = check_probe_supported(
-                architecture, program, mapping
-            )
-        except ValueError as exc:
-            return self._failure(
-                mapping, "UNSUPPORTED_PROGRAM", str(exc), status="unsupported"
-            )
-
+    def _run_probe(
+        self,
+        mapping,
+        workdir,
+        command,
+        result_path,
+        artifact_prefix,
+        invocation,
+    ):
         try:
             simulator_library = self._prepare_simulator_directory(workdir)
         except (OSError, FileNotFoundError) as exc:
-            return self._failure(mapping, "PROBE_ENVIRONMENT", str(exc))
+            return None, self._failure(mapping, "PROBE_ENVIRONMENT", str(exc))
 
-        result_path = workdir / "tensix_probe_result.json"
-        command = [
-            str(self.probe_binary),
-            "--core-x",
-            str(core_x),
-            "--core-y",
-            str(core_y),
-            "--result",
-            str(result_path),
-        ]
         env = os.environ.copy()
         env.update(
             {
@@ -136,11 +127,11 @@ class TTMetalProbeBackend:
             }
         )
         write_json(
-            workdir / "tensix_probe_invocation.json",
+            workdir / f"{artifact_prefix}_invocation.json",
             {
                 "argv": command,
                 "cwd": str(self.tt_metal_home),
-                "core": [core_x, core_y],
+                **invocation,
                 "ttsim_sha256": hashlib.sha256(
                     simulator_library.read_bytes()
                 ).hexdigest(),
@@ -148,8 +139,8 @@ class TTMetalProbeBackend:
         )
 
         try:
-            with (workdir / "tensix_probe_stdout.log").open("w") as stdout, (
-                workdir / "tensix_probe_stderr.log"
+            with (workdir / f"{artifact_prefix}_stdout.log").open("w") as stdout, (
+                workdir / f"{artifact_prefix}_stderr.log"
             ).open("w") as stderr:
                 process = subprocess.run(
                     command,
@@ -161,20 +152,52 @@ class TTMetalProbeBackend:
                     check=False,
                 )
             if process.returncode != 0:
-                return self._failure(
+                return None, self._failure(
                     mapping,
                     "PROBE_FAILED",
-                    f"Tensix probe exited with {process.returncode}",
+                    f"{self.probe_label} exited with {process.returncode}",
                 )
-            result = json.loads(result_path.read_text())
+            return json.loads(result_path.read_text()), None
         except subprocess.TimeoutExpired:
-            return self._failure(
+            return None, self._failure(
                 mapping,
                 "PROBE_TIMEOUT",
-                f"Tensix probe exceeded {self.timeout_seconds:g} seconds",
+                f"{self.probe_label} exceeded {self.timeout_seconds:g} seconds",
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            return self._failure(mapping, "PROBE_RESULT_ERROR", str(exc))
+            return None, self._failure(mapping, "PROBE_RESULT_ERROR", str(exc))
+
+    def run(self, architecture, program, mapping, workdir):
+        workdir = workdir.resolve()
+        try:
+            core_x, core_y = check_probe_supported(
+                architecture, program, mapping
+            )
+        except ValueError as exc:
+            return self._failure(
+                mapping, "UNSUPPORTED_PROGRAM", str(exc), status="unsupported"
+            )
+
+        result_path = workdir / "tensix_probe_result.json"
+        command = [
+            str(self.probe_binary),
+            "--core-x",
+            str(core_x),
+            "--core-y",
+            str(core_y),
+            "--result",
+            str(result_path),
+        ]
+        result, failure = self._run_probe(
+            mapping,
+            workdir,
+            command,
+            result_path,
+            "tensix_probe",
+            {"core": [core_x, core_y]},
+        )
+        if failure:
+            return failure
 
         if (
             not isinstance(result, dict)
@@ -189,7 +212,7 @@ class TTMetalProbeBackend:
         passed = result["passed"]
         return Report(
             backend=self.name,
-            backend_version="bf16-add-v1",
+            backend_version=self.backend_version,
             status="ok" if passed else "error",
             mapping_hash=fingerprint(mapping),
             correctness="passed" if passed else "failed",

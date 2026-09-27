@@ -65,7 +65,7 @@ right = ReLU(p)
 y = left + right
 ```
 
-实际计算仍是 int32 BRISC kernel；数据由 host 转发。尚未接入 Tensix FPU/SFPU、设备端 NoC、fusion 或多核 region。
+默认 BRISC 路径仍是 int32 kernel，数据由 host 转发。可选 TT-Metal 路径已覆盖单核 BF16 add，以及两个 Tensix core 之间通过设备端 NoC 传递中间 tile 的两级 add chain；仍不提供 timing objective，也未支持通用 fusion 或多核 region。
 
 每个 trial 保存：
 - `arch.yaml`

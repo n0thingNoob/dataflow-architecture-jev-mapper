@@ -1,12 +1,8 @@
 """TT-Metal backend for a two-core producer-consumer Tensix chain."""
-import hashlib
-import json
-import os
-import subprocess
 from pathlib import Path
 
 from report import Report, unsupported_metrics
-from specs import fingerprint, write_json
+from specs import fingerprint
 from tt_metal_probe import TTMetalProbeBackend, logical_core_to_coord
 from validator import validate_inputs, validate_mapping
 
@@ -22,8 +18,7 @@ def check_chain_supported(architecture, program, mapping):
     if len(program.ops) != 2 or any(op.op != "add" for op in program.ops):
         raise ValueError("Tensix chain supports exactly two add ops")
 
-    ordered = program.ordered_ops()
-    first, second = ordered
+    first, second = program.ordered_ops()
     if first.output not in second.inputs:
         raise ValueError("Second add must consume the first add output")
     if len(mapping.regions) != 2:
@@ -51,32 +46,15 @@ def check_chain_supported(architecture, program, mapping):
     if any(t.dtype != "bfloat16" or t.shape != [32, 32] for t in tensors):
         raise ValueError("Tensix chain supports 32x32 BF16 tiles only")
 
-    return (
-        first,
-        second,
-        placements,
-        [
-            logical_core_to_coord(architecture, placements[0]),
-            logical_core_to_coord(architecture, placements[1]),
-        ],
-    )
+    coords = [logical_core_to_coord(architecture, core) for core in placements]
+    return first, second, placements, coords
 
 
 class TTMetalChainBackend(TTMetalProbeBackend):
     name = "tt-metal-tensix-chain"
-
-    def _failure(self, mapping, code, message, status="error"):
-        return Report(
-            backend=self.name,
-            backend_version="bf16-add-chain-v1",
-            status=status,
-            mapping_hash=fingerprint(mapping),
-            message=message,
-            extensions={
-                "error_code": code,
-                "compute_path": "Two-stage Tensix add chain via TT-Metal",
-            },
-        )
+    backend_version = "bf16-add-chain-v1"
+    compute_path = "Two-stage Tensix add chain via TT-Metal"
+    probe_label = "Tensix chain probe"
 
     def run(self, architecture, program, mapping, workdir):
         workdir = workdir.resolve()
@@ -88,11 +66,6 @@ class TTMetalChainBackend(TTMetalProbeBackend):
             return self._failure(
                 mapping, "UNSUPPORTED_PROGRAM", str(exc), status="unsupported"
             )
-
-        try:
-            simulator_library = self._prepare_simulator_directory(workdir)
-        except (OSError, FileNotFoundError) as exc:
-            return self._failure(mapping, "PROBE_ENVIRONMENT", str(exc))
 
         result_path = workdir / "tensix_chain_result.json"
         kernel_root = Path(__file__).resolve().parent / "tensix_probe" / "kernels"
@@ -111,66 +84,25 @@ class TTMetalChainBackend(TTMetalProbeBackend):
             "--result",
             str(result_path),
         ]
-        env = os.environ.copy()
-        env.update(
+        result, failure = self._run_probe(
+            mapping,
+            workdir,
+            command,
+            result_path,
+            "tensix_chain",
             {
-                "TT_METAL_HOME": str(self.tt_metal_home),
-                "TT_METAL_SIMULATOR": str(simulator_library),
-                "TT_METAL_SIMULATOR_HOME": str(simulator_library.parent),
-                "TT_METAL_SLOW_DISPATCH_MODE": "1",
-                "TT_METAL_FORCE_JIT_COMPILE": "1",
-                "TT_METAL_DISABLE_SFPLOADMACRO": "1",
-            }
-        )
-        write_json(
-            workdir / "tensix_chain_invocation.json",
-            {
-                "argv": command,
-                "cwd": str(self.tt_metal_home),
                 "logical_cores": logical_cores,
                 "physical_cores": [list(coord) for coord in coords],
                 "stages": [first.id, second.id],
-                "ttsim_sha256": hashlib.sha256(
-                    simulator_library.read_bytes()
-                ).hexdigest(),
             },
         )
+        if failure:
+            return failure
 
-        try:
-            with (workdir / "tensix_chain_stdout.log").open("w") as stdout, (
-                workdir / "tensix_chain_stderr.log"
-            ).open("w") as stderr:
-                process = subprocess.run(
-                    command,
-                    cwd=self.tt_metal_home,
-                    env=env,
-                    stdout=stdout,
-                    stderr=stderr,
-                    timeout=self.timeout_seconds,
-                    check=False,
-                )
-            if process.returncode != 0:
-                return self._failure(
-                    mapping,
-                    "PROBE_FAILED",
-                    f"Tensix chain probe exited with {process.returncode}",
-                )
-            result = json.loads(result_path.read_text())
-        except subprocess.TimeoutExpired:
-            return self._failure(
-                mapping,
-                "PROBE_TIMEOUT",
-                f"Tensix chain probe exceeded {self.timeout_seconds:g} seconds",
-            )
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            return self._failure(mapping, "PROBE_RESULT_ERROR", str(exc))
-
-        expected_producer = list(coords[0])
-        expected_consumer = list(coords[1])
         if (
             not isinstance(result, dict)
-            or result.get("producer_core") != expected_producer
-            or result.get("consumer_core") != expected_consumer
+            or result.get("producer_core") != list(coords[0])
+            or result.get("consumer_core") != list(coords[1])
             or result.get("elements") != 1024
             or result.get("intermediate_transport") != "noc_direct"
             or result.get("intermediate_returned_to_host") is not False
@@ -185,7 +117,7 @@ class TTMetalChainBackend(TTMetalProbeBackend):
         passed = result["passed"]
         return Report(
             backend=self.name,
-            backend_version="bf16-add-chain-v1",
+            backend_version=self.backend_version,
             status="ok" if passed else "error",
             mapping_hash=fingerprint(mapping),
             correctness="passed" if passed else "failed",

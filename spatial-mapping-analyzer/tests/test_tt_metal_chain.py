@@ -47,6 +47,18 @@ class TTMetalChainTests(unittest.TestCase):
             timeout_seconds=5,
         )
 
+    def run_with_result(self, result):
+        def fake_run(command, **kwargs):
+            result_path = Path(command[command.index("--result") + 1])
+            result_path.write_text(json.dumps(result))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("tt_metal_probe.subprocess.run", side_effect=fake_run) as run:
+            report = self.backend().run(
+                self.arch, self.program, self.mapping, self.workdir
+            )
+        return report, run
+
     def test_chain_contract_extracts_two_distinct_stages(self):
         first, second, logical, coords = check_chain_supported(
             self.arch, self.program, self.mapping
@@ -56,26 +68,16 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertEqual(coords, [(0, 0), (1, 0)])
 
     def test_backend_invokes_both_mapped_cores(self):
-        def fake_run(command, **kwargs):
-            result_path = Path(command[command.index("--result") + 1])
-            result_path.write_text(
-                json.dumps(
-                    {
-                        "passed": True,
-                        "producer_core": [0, 0],
-                        "consumer_core": [1, 0],
-                        "intermediate_transport": "noc_direct",
-                        "intermediate_returned_to_host": False,
-                        "elements": 1024,
-                    }
-                )
-            )
-            return subprocess.CompletedProcess(command, 0)
-
-        with patch("tt_metal_chain.subprocess.run", side_effect=fake_run) as run:
-            report = self.backend().run(
-                self.arch, self.program, self.mapping, self.workdir
-            )
+        report, run = self.run_with_result(
+            {
+                "passed": True,
+                "producer_core": [0, 0],
+                "consumer_core": [1, 0],
+                "intermediate_transport": "noc_direct",
+                "intermediate_returned_to_host": False,
+                "elements": 1024,
+            }
+        )
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.correctness, "passed")
@@ -103,26 +105,16 @@ class TTMetalChainTests(unittest.TestCase):
             check_chain_supported(self.arch, bad, self.mapping)
 
     def test_probe_result_must_prove_direct_noc_transport(self):
-        def fake_run(command, **kwargs):
-            result_path = Path(command[command.index("--result") + 1])
-            result_path.write_text(
-                json.dumps(
-                    {
-                        "passed": True,
-                        "producer_core": [0, 0],
-                        "consumer_core": [1, 0],
-                        "intermediate_transport": "host",
-                        "intermediate_returned_to_host": True,
-                        "elements": 1024,
-                    }
-                )
-            )
-            return subprocess.CompletedProcess(command, 0)
-
-        with patch("tt_metal_chain.subprocess.run", side_effect=fake_run):
-            report = self.backend().run(
-                self.arch, self.program, self.mapping, self.workdir
-            )
+        report, _ = self.run_with_result(
+            {
+                "passed": True,
+                "producer_core": [0, 0],
+                "consumer_core": [1, 0],
+                "intermediate_transport": "host",
+                "intermediate_returned_to_host": True,
+                "elements": 1024,
+            }
+        )
         self.assertEqual(report.status, "error")
         self.assertEqual(
             report.extensions["error_code"], "PROBE_RESULT_MISMATCH"
