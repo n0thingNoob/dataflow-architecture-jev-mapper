@@ -78,6 +78,25 @@ class PipelineUnitTests(unittest.TestCase):
         self.assertEqual(report.status, "error")
         self.assertIn("identity", report.message)
 
+    def test_execute_rejects_backend_version_mismatch(self):
+        class Backend:
+            name = "expected"
+            backend_version = "v2"
+
+            def run(inner, arch, program, mapping, directory):
+                return Report(
+                    backend=inner.name,
+                    backend_version="v1",
+                    status="ok",
+                    mapping_hash=fingerprint(mapping),
+                )
+
+        report = _execute(
+            self.arch, self.program, self.mapping, Backend(), Path("."), [], None
+        )
+        self.assertEqual(report.status, "error")
+        self.assertIn("identity", report.message)
+
     def test_execute_rejects_objective_definition_change(self):
         class Backend:
             name = "test"
