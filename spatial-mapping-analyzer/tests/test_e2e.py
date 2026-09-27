@@ -90,7 +90,19 @@ class E2ETests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(ROOT / "export_schemas.py"), "--output", str(destination)],
                                 capture_output=True, text=True, timeout=30, cwd=self.workdir)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual({p.stem for p in destination.iterdir()}, {n + ".schema" for n in ["arch", "program", "mapping", "report"]})
+        self.assertEqual(
+            {p.stem for p in destination.iterdir()},
+            {
+                name + ".schema"
+                for name in [
+                    "arch",
+                    "program",
+                    "mapping",
+                    "report",
+                    "dataset_record",
+                ]
+            },
+        )
         result = self.cli("--iterations", "0")
         self.assertEqual(json.loads(result.stderr)["errors"][0]["code"], "ITERATIONS")
         result = self.cli("--tt-sim-library", str(self.workdir / "missing.so"))
