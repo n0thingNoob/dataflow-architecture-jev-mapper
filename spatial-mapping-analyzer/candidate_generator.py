@@ -48,7 +48,7 @@ def generate_candidates(
     program,
     limit=16,
     capabilities=None,
-    candidate_key=None,
+    candidate_execution_signature=None,
 ):
     """Generate distinct mappings in dimensions the selected backend can execute."""
     if limit < 1:
@@ -95,8 +95,8 @@ def generate_candidates(
                     ],
                 )
                 key = (
-                    candidate_key(architecture, program, mapping)
-                    if candidate_key is not None
+                    candidate_execution_signature(architecture, program, mapping)
+                    if candidate_execution_signature is not None
                     else fingerprint(mapping)
                 )
                 try:
