@@ -139,8 +139,6 @@ def run(
             "requested_execution_signature": requested_execution_signature,
             "validation": validation,
             "report": report.model_dump(),
-            "objective": objective.model_dump() if objective else None,
-            "measured_cost": objective.value if objective and objective.source == "measured" else None,
             "feedback_trial_ids": [t["trial_id"] for t in history],
         }
 
@@ -148,7 +146,7 @@ def run(
             successful_trials.append(trial_id)
         if objective:
             objective_key = report.objective_key()
-            if best is None or objective.value < best["objective"]["value"]:
+            if best is None or objective.value < best["report"]["objective"]["value"]:
                 best = trial
 
         write_json(directory / "report.json", trial["report"])
@@ -164,13 +162,13 @@ def run(
         "status": "ok" if successful_trials else "no_successful_result",
         "successful_trial_ids": successful_trials,
         "best_trial_id": best["trial_id"] if best else None,
-        "best_objective": best["objective"] if best else None,
+        "best_objective": best["report"]["objective"] if best else None,
         "trials": [
             {
                 "trial_id": t["trial_id"],
                 "valid": t["validation"]["valid"],
                 "status": t["report"]["status"],
-                "objective": t["objective"],
+                "objective": t["report"]["objective"],
             }
             for t in history
         ],
