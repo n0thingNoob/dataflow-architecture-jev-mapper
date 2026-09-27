@@ -56,8 +56,13 @@ def _requested_execution_signature(
 
 
 def _execute(architecture, program, mapping, backend, directory, errors, objective_key):
-    report_fields = {"backend": backend.name, "backend_version": "unknown",
-                     "mapping_hash": fingerprint(mapping) if mapping is not None else "unavailable"}
+    report_fields = {
+        "backend": backend.name,
+        "backend_version": getattr(backend, "backend_version", "unknown"),
+        "mapping_hash": (
+            fingerprint(mapping) if mapping is not None else "unavailable"
+        ),
+    }
     if errors:
         return Report(**report_fields, status="skipped", message="Mapping validation failed; backend was not invoked")
     try:
