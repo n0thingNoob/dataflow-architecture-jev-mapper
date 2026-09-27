@@ -146,7 +146,10 @@ def run(
             successful_trials.append(trial_id)
         if objective:
             objective_key = report.objective_key()
-            if best is None or objective.value < best["report"]["objective"]["value"]:
+            if rank_objectives and (
+                best is None
+                or objective.value < best["report"]["objective"]["value"]
+            ):
                 best = trial
 
         write_json(directory / "report.json", trial["report"])
