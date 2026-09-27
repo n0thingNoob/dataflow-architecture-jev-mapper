@@ -17,6 +17,7 @@ DEFAULT_LIBRARY = ROOT.parent / "third_party/ttsim/src/_out/release_wh/libttsim.
 
 class TTSimBackend:
     name = "tt-sim-program"
+    backend_version = "brisc-int32-v1"
     manifest_filename = "program_execution.json"
     search_capabilities = BackendCapabilities()
 
@@ -65,7 +66,7 @@ class TTSimBackend:
         workdir = workdir.resolve()
         identity = {
             "backend": self.name,
-            "backend_version": "brisc-int32-v1",
+            "backend_version": self.backend_version,
             "mapping_hash": fingerprint(mapping),
         }
         scope = {
