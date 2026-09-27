@@ -87,7 +87,7 @@ class CandidateTests(unittest.TestCase):
             self.arch,
             self.program,
             limit=6,
-            candidate_key=signature,
+            candidate_execution_signature=signature,
         )
         signatures = [
             signature(self.arch, self.program, mapping)
