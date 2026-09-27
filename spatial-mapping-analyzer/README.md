@@ -65,7 +65,7 @@ right = ReLU(p)
 y = left + right
 ```
 
-默认 BRISC 路径仍是 int32 kernel，数据由 host 转发。可选 TT-Metal 路径已覆盖单核 BF16 add，以及两个 Tensix core 之间通过设备端 NoC 传递中间 tile 的两级 add chain；仍不提供 timing objective，也未支持通用 fusion 或多核 region。
+默认 BRISC 路径仍是 int32 kernel，数据由 host 转发。可选 TT-Metal 路径已覆盖单核 BF16 add，以及两个 Tensix core 之间通过设备端 NoC 传递中间 tile 的两级 add chain。TT-Sim runtime 仍只做 correctness；在真实 Wormhole 上使用 `--tensix-runtime device` 时，两核 chain 会从 TT-Metal device profiler 读取 `DEVICE KERNEL DURATION [ns]`，并作为 `source=measured` 的 ranking objective。当前仍未支持通用 fusion 或多核 region。
 
 每个 trial 保存：
 - `arch.yaml`
@@ -86,7 +86,7 @@ python export_schemas.py
 
 CI 会编译固定版本 TT-Sim，运行 unit tests、passthrough E2E 和 search E2E。
 
-下一阶段需要解决的是可信 performance label；在此之前不接 learned/Jev model，也不把 synthetic objective 当训练标签。
+真实 Wormhole device profiler 的 kernel duration 现在可以作为 measured performance label；TT-Sim、host wall-clock 和 synthetic 数值都不会被当成真实训练标签。下一阶段可以在这个 provenance contract 上扩大 workload/mapping 覆盖，再接 learned/Jev model。
 
 
 ## 可选 Tensix placement probe
@@ -97,5 +97,5 @@ BRISC correctness 路径之外，仓库现在提供一个可选的 TT-Metal/Tens
 Mapping IR placement -> TT-Metal CoreCoord -> TT-Sim Tensix compute
 ```
 
-它支持单个 32x32 BF16 add placement probe，以及两个不同 Tensix core 上的两级 BF16 add chain；chain 的中间 tile 直接通过 NoC 传递，不返回 host。两条路径都只验证 correctness/placement，不提供 timing objective。search 会按 backend execution signature 去重，避免重复运行 lowering 后相同的 placement。构建和运行方法见
+它支持单个 32x32 BF16 add placement probe，以及两个不同 Tensix core 上的两级 BF16 add chain；chain 的中间 tile 直接通过 NoC 传递，不返回 host。TT-Sim 模式只验证 correctness/placement；真实 device 模式下，两核 chain 会读取 TT-Metal device profiler 的 kernel duration 并提供 measured objective。search 会按 backend execution signature 去重，避免重复运行 lowering 后相同的 placement。构建和运行方法见
 `tensix_probe/README.md`。TT-Metal 作为外部依赖使用，不作为本仓库 submodule。
