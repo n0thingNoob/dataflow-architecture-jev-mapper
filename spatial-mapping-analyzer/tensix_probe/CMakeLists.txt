@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.22...4.2)
+project(spatial_tensix_probe)
+
+add_executable(spatial_tensix_probe placement_probe.cpp)
+
+if(TT_METAL_SOURCE_DIR)
+    set(WITH_PYTHON_BINDINGS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_DISTRIBUTED OFF CACHE BOOL "" FORCE)
+    set(TT_METAL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(TTNN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_PROGRAMMING_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(TT_USE_SYSTEM_SFPI ON CACHE BOOL "" FORCE)
+    set(CMAKE_COMPILE_WARNING_AS_ERROR OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${TT_METAL_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/tt-metal" EXCLUDE_FROM_ALL)
+    # The pinned source's HAL archives can race their object libraries when
+    # built from this external project. Finish the objects before archiving.
+    add_dependencies(hal_1xx wh_hal bh_hal)
+    add_dependencies(hal_2xx qa_hal)
+    target_link_libraries(spatial_tensix_probe PUBLIC tt_metal)
+else()
+    find_package(TT-Metalium REQUIRED)
+    target_link_libraries(spatial_tensix_probe PUBLIC TT::Metalium)
+    if(TARGET TT::CommonPCH)
+        tt_reuse_precompile_headers(spatial_tensix_probe TT::CommonPCH)
+    endif()
+endif()

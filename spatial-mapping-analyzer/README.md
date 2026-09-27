@@ -87,3 +87,15 @@ python export_schemas.py
 CI 会编译固定版本 TT-Sim，运行 unit tests、passthrough E2E 和 search E2E。
 
 下一阶段需要解决的是可信 performance label；在此之前不接 learned/Jev model，也不把 synthetic objective 当训练标签。
+
+
+## 可选 Tensix placement probe
+
+BRISC correctness 路径之外，仓库现在提供一个可选的 TT-Metal/Tensix probe，用来验证：
+
+```text
+Mapping IR placement -> TT-Metal CoreCoord -> TT-Sim Tensix compute
+```
+
+它目前只支持一个 32x32 BF16 add，仍然不提供 timing objective。构建和运行方法见
+`tensix_probe/README.md`。TT-Metal 作为外部依赖使用，不作为本仓库 submodule。

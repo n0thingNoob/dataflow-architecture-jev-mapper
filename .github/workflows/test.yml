@@ -31,7 +31,7 @@ jobs:
 
       - name: Unit and integration tests with coverage
         run: |
-          coverage run --branch             --source=analyzer,candidate_generator,mapping_ir,pipeline,report,specs,validator,workload             -m unittest discover -s tests -v
+          coverage run --branch             --source=analyzer,candidate_generator,mapping_ir,pipeline,report,specs,tt_metal_probe,validator,workload             -m unittest discover -s tests -v
           coverage report --show-missing --fail-under=75
 
       - run: python export_schemas.py
@@ -50,3 +50,65 @@ jobs:
         with:
           name: program-e2e
           path: spatial-mapping-analyzer/results/
+
+
+  tensix-real:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: ghcr.io/tenstorrent/tt-metal/tt-metalium/ubuntu-22.04-dev-amd64@sha256:a23971d3463832761c3ee6f23b5c386945f0dc7c7ceb7e2f103a978da58b83af
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install GitHub CLI and Python helpers
+        run: |
+          apt-get update
+          apt-get install -y curl git gh python3-pip cmake ninja-build
+          /usr/bin/python3 -m pip install pyyaml pydantic
+
+      - name: Checkout pinned TT-Metal source
+        uses: actions/checkout@v4
+        with:
+          repository: tenstorrent/tt-metal
+          ref: 038c8bbd192aa56a8ffaf6f7010f46d0b99eeca0
+          path: third_party/tt-metal-src
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Configure pinned TT-Metal source
+        run: |
+          set -euo pipefail
+          tt_metal_home="$GITHUB_WORKSPACE/third_party/tt-metal-src"
+          test -f "$tt_metal_home/tt_metal/ttsim-version"
+          test -f "$tt_metal_home/cmake/x86_64-linux-clang-20-libstdcpp-toolchain.cmake"
+          echo "TT_METAL_HOME=$tt_metal_home" >> "$GITHUB_ENV"
+          echo "TT_METAL_SOURCE_DIR=$tt_metal_home" >> "$GITHUB_ENV"
+
+      - name: Fetch TT-Metal pinned Wormhole TT-Sim
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < "$TT_METAL_HOME/tt_metal/ttsim-version")"
+          test -n "$version"
+          mkdir -p "$GITHUB_WORKSPACE/.ci/ttsim"
+          gh release download "$version" \
+            --repo tenstorrent/ttsim \
+            --pattern 'libttsim_wh.so' \
+            --dir "$GITHUB_WORKSPACE/.ci/ttsim"
+          mv "$GITHUB_WORKSPACE/.ci/ttsim/libttsim_wh.so" "$GITHUB_WORKSPACE/.ci/ttsim/libttsim.so"
+          cp "$TT_METAL_HOME/tt_metal/soc_descriptors/wormhole_b0_80_arch.yaml" \
+            "$GITHUB_WORKSPACE/.ci/ttsim/soc_descriptor.yaml"
+
+      - name: Build and run real TT-Metal/TTSim placement probe
+        run: bash spatial-mapping-analyzer/tensix_probe/run_real_ttsim.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tensix-real-probe
+          path: spatial-mapping-analyzer/results/ci-tensix/
