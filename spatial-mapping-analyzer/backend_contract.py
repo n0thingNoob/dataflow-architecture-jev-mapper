@@ -1,7 +1,7 @@
 """Shared contracts between mapping search, execution backends, and reports."""
 import json
 from dataclasses import dataclass
-from typing import Any, Hashable, Protocol
+from typing import Any
 
 from pydantic import field_validator
 
@@ -15,20 +15,6 @@ class BackendCapabilities:
     topological_order: bool = True
     execution_policy: bool = True
     placement: bool = True
-
-
-class BackendProtocol(Protocol):
-    name: str
-    backend_version: str
-    search_capabilities: BackendCapabilities
-
-    def candidate_execution_signature(
-        self, architecture, program, mapping
-    ) -> Hashable:
-        ...
-
-    def run(self, architecture, program, mapping, workdir):
-        ...
 
 
 class ObservedExecutionIdentity(Contract):
