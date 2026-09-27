@@ -45,7 +45,6 @@ class PipelineUnitTests(unittest.TestCase):
 
         class Backend:
             name = "never"
-            backend_version = "1"
 
             def run(self, *args):
                 outer.fail("backend should not execute")
@@ -64,7 +63,6 @@ class PipelineUnitTests(unittest.TestCase):
     def test_execute_rejects_backend_identity_mismatch(self):
         class Backend:
             name = "expected"
-            backend_version = "1"
 
             def run(inner, arch, program, mapping, directory):
                 return Report(
@@ -221,7 +219,6 @@ class PipelineUnitTests(unittest.TestCase):
 
         class Backend:
             name = "broken-signature"
-            backend_version = "1"
 
             def candidate_execution_signature(
                 inner, architecture, program, mapping
