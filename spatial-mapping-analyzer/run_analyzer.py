@@ -48,7 +48,9 @@ def main():
 
     try:
         if args.search and args.parallel:
-            raise ValueError("--parallel is a passthrough option; search mode explores both execution policies")
+            raise ValueError(
+                "--parallel is a passthrough option; search mode follows backend capabilities"
+            )
         architecture = Architecture.model_validate(read_yaml(args.arch))
         program = Program.model_validate(read_yaml(args.program))
         inputs = json.loads(args.inputs.read_text()) if args.inputs else None
