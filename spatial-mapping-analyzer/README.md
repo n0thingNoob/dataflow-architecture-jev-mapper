@@ -75,7 +75,7 @@ y = left + right
 - `report.json`
 - simulator/debug artifacts
 
-整个 run 保存 `history.jsonl` 和 `summary.json`；只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
+整个 run 保存 `history.jsonl` 和 `summary.json`；每个 run 带稳定的 `run_id`，每个 trial 同时持久化 backend `execution_signature`。只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
 
 ## 测试
 
@@ -86,7 +86,20 @@ python export_schemas.py
 
 CI 会编译固定版本 TT-Sim，运行 unit tests、passthrough E2E 和 search E2E。
 
-真实 Wormhole device profiler 的 kernel duration 现在可以作为 measured performance label；TT-Sim、host wall-clock 和 synthetic 数值都不会被当成真实训练标签。下一阶段可以在这个 provenance contract 上扩大 workload/mapping 覆盖，再接 learned/Jev model。
+真实 Wormhole device profiler 的 kernel duration 现在可以作为 measured performance label；TT-Sim、host wall-clock 和 synthetic 数值都不会被当成真实训练标签。
+
+可用 `export_dataset.py` 把一个或多个 analyzer run 导出成训练 JSONL：
+
+```bash
+python export_dataset.py \
+  --run results/device-run-a \
+  --run results/device-run-b \
+  --output results/dataset/measured-mappings.jsonl
+```
+
+exporter 只接受 `status=ok`、`correctness=passed`、`objective.source=measured` 且带 `execution_signature` 的 trial。不同 run 对同一个 effective mapping 的重复测量会保留为独立 observation；重复传入同一个 run 不会重复样本。对应 JSON Schema 由 `export_schemas.py` 输出为 `dataset_record.schema.json`。
+
+下一阶段可以在这个 dataset contract 上做 collection/replay 和 baseline model。
 
 
 ## 可选 Tensix placement probe
