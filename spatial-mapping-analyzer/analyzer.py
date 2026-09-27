@@ -32,13 +32,13 @@ class EnumeratingAnalyzer:
         self,
         candidate_limit=16,
         search_capabilities=None,
-        execution_signature=None,
+        candidate_execution_signature=None,
     ):
         if candidate_limit < 1:
             raise ValueError("Candidate limit must be positive")
         self.candidate_limit = candidate_limit
         self.search_capabilities = search_capabilities
-        self.execution_signature = execution_signature
+        self.candidate_execution_signature = candidate_execution_signature
 
     def propose_mapping(self, architecture, program, feedback=None):
         feedback = feedback or []
@@ -47,6 +47,6 @@ class EnumeratingAnalyzer:
             program,
             limit=self.candidate_limit,
             capabilities=self.search_capabilities,
-            candidate_key=self.execution_signature,
+            candidate_key=self.candidate_execution_signature,
         )
         return candidates[len(feedback) % len(candidates)]
