@@ -115,7 +115,7 @@ class TTMetalChainTests(unittest.TestCase):
             "intermediate_returned_to_host": False,
             "elements": 1024,
             "measurement_source": "tt_metal_device_profiler",
-            "device_program_duration_ns": 1234,
+            "device_kernel_duration_ns": 1234,
         }
 
         def fake_run(command, **kwargs):
