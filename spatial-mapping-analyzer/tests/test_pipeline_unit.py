@@ -4,8 +4,9 @@ import unittest
 from pathlib import Path
 
 from analyzer import PassthroughAnalyzer
+from backend_contract import ObservedExecutionIdentity
 from pipeline import _execute, _propose, run
-from report import Objective, Report
+from report import MeasurementContext, Objective, Report
 from specs import Architecture, Program, fingerprint, read_yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,6 +134,11 @@ class PipelineUnitTests(unittest.TestCase):
             def __init__(self):
                 self.values = iter([9, 4, 7])
 
+            def candidate_execution_signature(
+                inner, arch, program, mapping
+            ):
+                return "mapping", fingerprint(mapping)
+
             def run(inner, arch, program, mapping, directory):
                 return Report(
                     backend=inner.name,
@@ -145,6 +151,18 @@ class PipelineUnitTests(unittest.TestCase):
                         unit="cycles",
                         source="measured",
                     ),
+                    observed_execution=ObservedExecutionIdentity(
+                        kind="test-execution",
+                        value={"mapping_hash": fingerprint(mapping)},
+                    ),
+                    measurement_context=MeasurementContext(
+                        measurement_version="test-v1",
+                        runtime="test-device",
+                        source="test-profiler",
+                        analysis="test latency",
+                        implementation_revision="revision-1",
+                        executable_sha256="deadbeef",
+                    ),
                 )
 
         with tempfile.TemporaryDirectory() as temp:
@@ -155,6 +173,36 @@ class PipelineUnitTests(unittest.TestCase):
             self.assertEqual(summary["best_trial_id"], "trial_0001")
             self.assertEqual(len(summary["successful_trial_ids"]), 3)
             self.assertTrue((output / "best_mapping.yaml").exists())
+
+    def test_signature_failure_skips_backend_execution(self):
+        outer = self
+
+        class Backend:
+            name = "broken-signature"
+
+            def candidate_execution_signature(
+                inner, architecture, program, mapping
+            ):
+                raise RuntimeError("signature boom")
+
+            def run(inner, *args):
+                outer.fail("backend should not execute after signature failure")
+
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "run"
+            summary = run(
+                self.arch,
+                self.program,
+                PassthroughAnalyzer(),
+                Backend(),
+                1,
+                output,
+            )
+            self.assertEqual(summary["status"], "no_successful_result")
+            validation = (
+                output / "trial_0000" / "validation.json"
+            ).read_text()
+            self.assertIn("EXECUTION_SIGNATURE_ERROR", validation)
 
     def test_run_rejects_non_positive_iterations(self):
         with tempfile.TemporaryDirectory() as temp:
