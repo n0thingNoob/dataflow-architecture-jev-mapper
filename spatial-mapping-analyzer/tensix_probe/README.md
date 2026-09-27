@@ -5,7 +5,9 @@ This optional probe validates one narrow path:
 ```text
 Mapping IR logical placement
         ↓
-logical core -> CoreCoord
+Mapping logical core ID -> TT-Metal logical worker CoreCoord
+        ↓
+worker_core_from_logical_core -> observed worker CoreCoord
         ↓
 TT-Metal Program
         ↓
@@ -81,6 +83,7 @@ python run_analyzer.py \
   --program examples/bf16_two_add_chain.yaml \
   --search --candidate-limit 4 --iterations 4 \
   --tt-metal-home "$TT_METAL_HOME" \
+  --tt-metal-revision "$(git -C "$TT_METAL_HOME" rev-parse HEAD)" \
   --tensix-chain-binary build/tensix_probe/spatial_tensix_chain_probe
 ```
 
@@ -89,7 +92,11 @@ Device mode enables `TT_METAL_DEVICE_PROFILER=1`,
 `TT_METAL_PROFILER_CPP_POST_PROCESS=1`. Each successful trial must return a
 positive `device_kernel_duration_ns` tagged with
 `measurement_source=tt_metal_device_profiler`; otherwise the backend rejects
-the result instead of manufacturing a timing label.
+the result instead of manufacturing a timing label. Device mode also requires
+an explicit TT-Metal revision and records that revision, the probe binary SHA256,
+and profiler configuration in `measurement_context`.
 
 The TT-Sim CI path deliberately stays on `--tensix-runtime ttsim` semantics
-and therefore must keep `objective: null`.
+and therefore must keep `objective: null`. It cross-checks requested TT-Metal
+logical cores against worker coordinates returned by TT-Metal, but it is not a
+physical-device performance validation.
