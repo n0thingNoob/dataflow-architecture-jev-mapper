@@ -7,7 +7,8 @@ from kernels import DONE, MAX_ELEMENTS, compile_kernel
 from specs import fingerprint, write_json
 from validator import validate_inputs, validate_mapping
 
-# Physical Wormhole Tensix coordinates: column 5 is a DRAM column.
+# Physical Wormhole Tensix coordinates exposed by this correctness harness.
+# Column 5 is a DRAM column and is intentionally skipped.
 CORES = [(x, 1) for x in (1, 2, 3, 4, 6, 7, 8, 9)]
 
 
@@ -17,8 +18,15 @@ def check_supported(architecture, program, mapping):
         raise ValueError(str(errors))
     if architecture.extensions.get("target_family") != "wormhole":
         raise ValueError("Program backend requires Wormhole")
+    if architecture.available_cores > len(CORES):
+        raise ValueError(
+            f"BRISC correctness backend exposes at most {len(CORES)} logical cores"
+        )
     if len(mapping.regions) > len(CORES) or any(len(r.ops) != 1 or r.cores != 1 for r in mapping.regions):
         raise ValueError("Program backend supports at most eight regions, one op and one core per region")
+    placed = [core for region in mapping.regions for core in (region.placement or [])]
+    if any(core >= len(CORES) for core in placed):
+        raise ValueError("Mapping placement exceeds BRISC correctness backend core capacity")
     if any(t.dtype != "int32" or len(t.shape) > 2 or any(d > 32 for d in t.shape)
            or math.prod(t.shape) > MAX_ELEMENTS for t in program.tensors.values()):
         raise ValueError("Program backend supports int32 scalars/vectors/matrices with dimensions <= 32")
@@ -71,7 +79,8 @@ def lower(program, mapping, inputs, directory):
         firmware = compile_kernel(op.op, [program.tensors[t].shape for t in op.inputs], count)
         filename = f"op_{index:04d}.bin"
         (directory / filename).write_bytes(firmware)
-        operations.append({"id": op.id, "region": region.id, "core": CORES[index],
+        logical_core = region.placement[0] if region.placement else index
+        operations.append({"id": op.id, "region": region.id, "core": CORES[logical_core],
                            "inputs": op.inputs, "output": op.output, "elements": count,
                            "firmware": filename, "firmware_sha256": hashlib.sha256(firmware).hexdigest()})
     manifest = {"schema_version": "0.1", "mapping_hash": fingerprint(mapping),

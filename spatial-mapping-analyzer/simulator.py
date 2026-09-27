@@ -1,13 +1,7 @@
 """Isolated process for the upstream Wormhole libttsim C ABI.
 
-Register/TLB definitions are tied to the pinned upstream source:
-  src/libttsim.cpp: tlb_translate(), pci_mem_wr_cur()
-  src/tile.cpp: RISCV_DEBUG_REGS_SOFT_RESET_0 handling
-  data/wh/tile_regs.json: reset register addresses and reset mask
-
-Use the supported PCI/BAR interface. The tile-relative ABI deliberately rejects
-Wormhole accesses. libttsim may terminate the process on an error, so this module
-must always run in a subprocess, never in the analyzer process.
+Register/TLB definitions are tied to the pinned upstream source. The runner is a
+correctness harness: API clock steps are diagnostic only, not accelerator cycles.
 """
 import argparse
 import ctypes
@@ -17,13 +11,13 @@ import struct
 import sys
 from pathlib import Path
 
-from kernels import A, B, OUTPUT, DONE
+from kernels import A, B, DONE, OUTPUT
 
 RESET_REGISTER = 0xFFB121B0
 ALL_RESET = 0x47800
 BRISC_RESET = 0x800
 TLB_CONFIG_OFFSET = 0x1FC00000
-WINDOW_MASK = 0xFFFFF  # Wormhole TLB 0 is a 1 MiB window.
+WINDOW_MASK = 0xFFFFF
 
 
 def digest(data):
@@ -35,7 +29,8 @@ class Wormhole:
         self.core = (1, 1)
         self.lib = ctypes.CDLL(str(library))
         signatures = {
-            "libttsim_init": ([], None), "libttsim_exit": ([], None),
+            "libttsim_init": ([], None),
+            "libttsim_exit": ([], None),
             "libttsim_clock": ([ctypes.c_uint32], None),
             "libttsim_pci_config_rd32": ([ctypes.c_uint32, ctypes.c_uint32], ctypes.c_uint32),
             "libttsim_pci_mem_wr_bytes": ([ctypes.c_uint64, ctypes.c_void_p, ctypes.c_uint32], None),
@@ -59,7 +54,6 @@ class Wormhole:
         self.lib.libttsim_pci_mem_wr_bytes(address, buffer, len(data))
 
     def select_window(self, address):
-        # Unicast physical NoC coordinate, relaxed ordering, local page.
         coordinate = self.core[0] | (self.core[1] << 6)
         config = (address >> 20) | (coordinate << 16)
         self.pci_write(self.bar0 + TLB_CONFIG_OFFSET, struct.pack("<Q", config))
@@ -96,60 +90,95 @@ def prepare(simulator, op, values, directory):
             raise RuntimeError("Device load/readback failed before execution")
 
 
+def _ready_operations(pending, values):
+    return [op for op in pending if all(name in values for name in op["inputs"])]
+
+
+def _launch(simulator, operations, values, directory, steps, trace_starts):
+    for op in operations:
+        prepare(simulator, op, values, directory)
+    for op in operations:
+        simulator.core = tuple(op["core"])
+        simulator.write32(RESET_REGISTER, ALL_RESET & ~BRISC_RESET)
+        if simulator.read(DONE, 4) != bytes(4):
+            raise RuntimeError("Completion changed before simulator clocking")
+        trace_starts[op["id"]] = steps
+
+
 def execute(library, manifest_path):
     manifest = json.loads(manifest_path.read_text())
     pending = list(manifest["operations"])
     values = dict(manifest["inputs"])
-    tensors, trace, waves, steps = {}, [], [], 0
+    tensors, trace, waves = {}, [], []
+    active = []
+    trace_starts = {}
+    steps = 0
+    parallel = manifest["execution_policy"] == "exclusive_cores_dependency_barrier"
+
     simulator = Wormhole(library)
     simulator.initialize()
     try:
-        while pending:
-            ready = [op for op in pending if all(name in values for name in op["inputs"])]
-            if manifest["execution_policy"] == "exclusive_cores_tensor_barrier":
+        while pending or active:
+            ready = _ready_operations(pending, values)
+            if not parallel and active:
+                ready = []
+            elif not parallel:
                 ready = ready[:1]
-            if not ready:
-                raise ValueError("No ready operations; invalid DAG or missing inputs")
-            for op in ready:
-                prepare(simulator, op, values, manifest_path.parent)
-            # No clock call occurs between these releases. Each core is initially pending.
-            for op in ready:
-                simulator.core = tuple(op["core"])
-                simulator.write32(RESET_REGISTER, ALL_RESET & ~BRISC_RESET)
-                if simulator.read(DONE, 4) != bytes(4):
-                    raise RuntimeError("Completion changed before simulator clocking")
-            start = steps
-            waves.append([op["id"] for op in ready])
-            active = list(ready)
-            quantum = 1 if all(op["elements"] == 1 for op in ready) else 32
-            while active:
-                count = min(quantum, manifest["max_clock_steps"] - steps)
-                if count <= 0:
-                    raise RuntimeError("Program exhausted simulator step budget")
-                simulator.lib.libttsim_clock(count)
-                steps += count
-                for op in list(active):
-                    simulator.core = tuple(op["core"])
-                    done = struct.unpack("<I", simulator.read(DONE, 4))[0]
-                    if done == 0:
-                        continue
-                    if done != 1:
-                        raise RuntimeError("Invalid completion flag")
-                    data = simulator.read(OUTPUT, op["elements"] * 4)
-                    values[op["output"]] = list(struct.unpack(f'<{op["elements"]}i', data))
-                    tensors[op["output"]] = values[op["output"]]
-                    simulator.write32(RESET_REGISTER, ALL_RESET)
-                    trace.append({"op": op["id"], "region": op["region"], "core": op["core"],
-                                  "start_api_step": start, "completion_observed_api_step": steps,
-                                  "poll_interval_steps": quantum, "completion_flag": done})
-                    active.remove(op)
+
+            if ready:
+                _launch(simulator, ready, values, manifest_path.parent, steps, trace_starts)
+                waves.append([op["id"] for op in ready])
+                active.extend(ready)
+                for op in ready:
                     pending.remove(op)
-        return {"status": "ok", "mapping_hash": manifest["mapping_hash"],
-                "manifest_sha256": digest(manifest_path.read_bytes()),
-                "library_sha256": digest(library.read_bytes()), "tensors": tensors,
-                "outputs": {name: values[name] for name in manifest["outputs"]},
-                "trace": trace, "waves": waves, "api_steps": steps,
-                "timing_scope": "Observed API steps; host transfers excluded; not hardware cycles"}
+
+            if not active:
+                raise ValueError("No ready operations; invalid DAG or missing inputs")
+
+            quantum = 1 if all(op["elements"] == 1 for op in active) else 32
+            count = min(quantum, manifest["max_clock_steps"] - steps)
+            if count <= 0:
+                raise RuntimeError("Program exhausted simulator step budget")
+            simulator.lib.libttsim_clock(count)
+            steps += count
+
+            completed = []
+            for op in active:
+                simulator.core = tuple(op["core"])
+                done = struct.unpack("<I", simulator.read(DONE, 4))[0]
+                if done == 0:
+                    continue
+                if done != 1:
+                    raise RuntimeError("Invalid completion flag")
+                data = simulator.read(OUTPUT, op["elements"] * 4)
+                values[op["output"]] = list(struct.unpack(f'<{op["elements"]}i', data))
+                tensors[op["output"]] = values[op["output"]]
+                simulator.write32(RESET_REGISTER, ALL_RESET)
+                trace.append({
+                    "op": op["id"],
+                    "region": op["region"],
+                    "core": op["core"],
+                    "start_api_step": trace_starts[op["id"]],
+                    "completion_observed_api_step": steps,
+                    "poll_interval_steps": quantum,
+                    "completion_flag": done,
+                })
+                completed.append(op)
+            for op in completed:
+                active.remove(op)
+
+        return {
+            "status": "ok",
+            "mapping_hash": manifest["mapping_hash"],
+            "manifest_sha256": digest(manifest_path.read_bytes()),
+            "library_sha256": digest(library.read_bytes()),
+            "tensors": tensors,
+            "outputs": {name: values[name] for name in manifest["outputs"]},
+            "trace": trace,
+            "waves": waves,
+            "api_steps": steps,
+            "timing_scope": "Observed API steps; host transfers excluded; not hardware cycles",
+        }
     finally:
         simulator.lib.libttsim_exit()
 

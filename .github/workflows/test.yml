@@ -1,5 +1,6 @@
 name: Program E2E
 on: [push, pull_request]
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -10,22 +11,40 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
       - name: Build pinned Wormhole TT-Sim
         working-directory: third_party/ttsim
         run: |
           test "$(git rev-parse HEAD)" = "$(git -C ../.. rev-parse HEAD:third_party/ttsim)"
           python make.py src/_out/release_wh/libttsim.so
           test -f src/_out/release_wh/libttsim.so
-      - run: python -m unittest discover -s tests -v
+
+      - name: Unit and integration tests with coverage
+        run: |
+          coverage run --branch             --source=analyzer,candidate_generator,mapping_ir,pipeline,report,specs,validator,workload             -m unittest discover -s tests -v
+          coverage report --show-missing --fail-under=75
+
       - run: python export_schemas.py
+
       - name: Tensor E2E
         run: python run_analyzer.py --program examples/gemm_relu_gemm.yaml --iterations 2 --output results/ci-tensor
+
       - name: Scalar diamond E2E
         run: python run_analyzer.py --program examples/scalar_diamond.yaml --inputs examples/scalar_diamond.inputs.json --parallel --iterations 2 --output results/ci-scalar
+
+      - name: Candidate search E2E
+        run: python run_analyzer.py --program examples/scalar_diamond.yaml --inputs examples/scalar_diamond.inputs.json --search --candidate-limit 8 --iterations 8 --output results/ci-search
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
