@@ -1,4 +1,5 @@
 """TT-Metal backend for a two-core producer-consumer Tensix chain."""
+import csv
 import hashlib
 from pathlib import Path
 
@@ -20,6 +21,22 @@ def kernel_bundle_sha256(kernel_root):
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def profiler_csv_durations(path):
+    with path.open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        field = "DEVICE KERNEL DURATION [ns]"
+        if field not in (reader.fieldnames or []):
+            raise ValueError(f"Profiler report is missing {field}")
+        values = []
+        for row in reader:
+            raw = (row.get(field) or "").strip()
+            if raw:
+                values.append(int(raw))
+    if not values:
+        raise ValueError("Profiler report contains no device kernel duration")
+    return values
 
 
 def check_chain_supported(architecture, program, mapping):
@@ -201,6 +218,26 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                     "PROBE_RESULT_MISMATCH",
                     "Device result is missing a valid TT-Metal profiler duration",
                 )
+
+            profiler_report = Path(provenance["profiler_report"])
+            try:
+                csv_durations = profiler_csv_durations(profiler_report)
+            except (OSError, ValueError) as exc:
+                return self._failure(
+                    mapping,
+                    "PROFILER_CROSS_CHECK_FAILED",
+                    str(exc),
+                )
+            if set(csv_durations) != {int(duration)}:
+                return self._failure(
+                    mapping,
+                    "PROFILER_CROSS_CHECK_FAILED",
+                    "Profiler API duration does not match cpp_device_perf_report.csv",
+                )
+            profiler_report_sha256 = hashlib.sha256(
+                profiler_report.read_bytes()
+            ).hexdigest()
+
             objective = Objective(
                 name="device_kernel_duration",
                 value=float(duration),
@@ -216,8 +253,12 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                 executable_sha256=provenance["probe_binary_sha256"],
                 artifacts={
                     "custom_kernel_bundle_sha256": custom_kernel_bundle_sha256,
+                    "profiler_report_sha256": profiler_report_sha256,
                 },
-                configuration=provenance["profiler_configuration"],
+                configuration={
+                    **provenance["profiler_configuration"],
+                    "cross_check": "cpp_device_perf_report.csv",
+                },
             )
             metrics["latency"] = Metric(
                 value=float(duration),
