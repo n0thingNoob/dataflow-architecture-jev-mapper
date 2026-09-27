@@ -2,7 +2,7 @@
 import hashlib
 from pathlib import Path
 
-from backend_contract import BackendCapabilities, ObservedExecutionIdentity
+from backend_contract import ObservedExecutionIdentity
 from report import MeasurementContext, Metric, Objective, Report, unsupported_metrics
 from specs import fingerprint
 from tt_metal_probe import (
@@ -78,12 +78,6 @@ class TTMetalChainBackend(TTMetalProbeBackend):
     measurement_version = "tt-metal-device-kernel-duration-v1"
     compute_path = "Two-stage Tensix add chain via TT-Metal"
     probe_label = "Tensix chain probe"
-    search_capabilities = BackendCapabilities(
-        topological_order=False,
-        execution_policy=False,
-        placement=True,
-    )
-
     def candidate_execution_signature(self, architecture, program, mapping):
         first, second, _, tt_metal_logical_cores = check_chain_supported(
             architecture, program, mapping

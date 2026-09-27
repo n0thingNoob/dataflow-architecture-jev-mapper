@@ -216,7 +216,6 @@ class E2ETests(unittest.TestCase):
             self.assertTrue(report["extensions"]["program_dag_executed"])
             self.assertEqual(len(report["extensions"]["execution"]["outputs"]["y"]), 1024)
             self.assertIsNone(report["objective"])
-            self.assertIsNone(trial["measured_cost"])
             self.assertIsNone(report["metrics"]["total_cycles"]["value"])
             directory = self.output / trial["trial_id"]
             for name in ["inputs.json", "reference.json", "correctness.json", "program_execution.json", "op_0000.bin", "invocation.json"]:

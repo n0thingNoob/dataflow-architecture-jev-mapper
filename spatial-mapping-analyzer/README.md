@@ -76,7 +76,7 @@ y = left + right
 - `report.json`
 - simulator/debug artifacts
 
-整个 run 保存 `history.jsonl` 和 `summary.json`；每个 run 带稳定的 `run_id`，每个 trial 持久化 backend `requested_execution_signature`。backend report 另外保存运行时实际观察到的 `observed_execution`。这两者不可混用。只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
+整个 run 保存 `history.jsonl` 和 `summary.json`；每个 run 带稳定的 `run_id`，每个 trial 持久化 backend `requested_execution_signature`。backend report 另外保存运行时实际观察到的 `observed_execution`，并以 `report.objective` 作为 objective 的唯一持久化来源，不再在 trial 顶层镜像重复字段。这些 identity 不可混用。只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
 
 ## 测试
 

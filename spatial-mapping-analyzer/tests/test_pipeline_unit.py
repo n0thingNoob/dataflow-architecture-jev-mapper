@@ -166,7 +166,7 @@ class PipelineUnitTests(unittest.TestCase):
                 ),
             )
 
-    def test_run_records_measured_cost_and_selects_lowest(self):
+    def test_run_selects_lowest_measured_objective(self):
         class Backend:
             name = "measured-test"
             backend_version = "1"
