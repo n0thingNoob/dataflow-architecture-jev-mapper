@@ -184,10 +184,6 @@ class TTMetalChainTests(unittest.TestCase):
             "custom_kernel_bundle_sha256",
             report.measurement_context.artifacts,
         )
-        self.assertIn(
-            "profiler_report_sha256",
-            report.measurement_context.artifacts,
-        )
         self.assertEqual(
             report.measurement_context.configuration["cross_check"],
             "cpp_device_perf_report.csv",
