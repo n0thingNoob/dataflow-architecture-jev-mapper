@@ -16,9 +16,10 @@ official TT-Sim
 Tensix UNPACK / MATH / PACK
 ```
 
-It is intentionally **not** a performance backend. It runs one 32x32 BF16 tile
-`add` and checks correctness on the requested worker core. No latency/cycle
-objective is produced.
+TT-Sim remains correctness-only. The two-core chain can additionally run on a
+real Wormhole device and read `DEVICE KERNEL DURATION [ns]` from TT-Metal's
+device profiler. Only that device-profiler value is emitted as a measured
+ranking objective; host wall-clock and simulator timing are never used as labels.
 
 ## Prerequisites
 
@@ -65,3 +66,30 @@ Current scope is deliberately small:
 - one explicitly placed core
 - correctness only
 - no performance metric
+
+
+## Real Wormhole measured objective
+
+Build the probes against a Tracy-enabled TT-Metal build, then run the two-core
+chain on a physical Wormhole device:
+
+```bash
+python run_analyzer.py \
+  --backend tensix-chain \
+  --tensix-runtime device \
+  --arch examples/wormhole_tensix_probe.yaml \
+  --program examples/bf16_two_add_chain.yaml \
+  --search --candidate-limit 4 --iterations 4 \
+  --tt-metal-home "$TT_METAL_HOME" \
+  --tensix-chain-binary build/tensix_probe/spatial_tensix_chain_probe
+```
+
+Device mode enables `TT_METAL_DEVICE_PROFILER=1`,
+`TT_METAL_PROFILER_MID_RUN_DUMP=1`, and
+`TT_METAL_PROFILER_CPP_POST_PROCESS=1`. Each successful trial must return a
+positive `device_kernel_duration_ns` tagged with
+`measurement_source=tt_metal_device_profiler`; otherwise the backend rejects
+the result instead of manufacturing a timing label.
+
+The TT-Sim CI path deliberately stays on `--tensix-runtime ttsim` semantics
+and therefore must keep `objective: null`.
