@@ -38,10 +38,6 @@ def _record_from_trial(raw, fallback_run_id):
     if not isinstance(validation, dict) or validation.get("valid") is not True:
         raise ValueError("Measured trial must have successful mapping validation")
 
-    trial_objective = raw.get("objective")
-    if trial_objective != objective.model_dump():
-        raise ValueError("Trial objective does not match backend report objective")
-
     architecture = Architecture.model_validate(raw["architecture"])
     program = Program.model_validate(raw["program"])
     mapping = Mapping.model_validate(raw["mapping"])
