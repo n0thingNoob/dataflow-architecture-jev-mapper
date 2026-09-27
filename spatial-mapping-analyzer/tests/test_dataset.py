@@ -68,6 +68,7 @@ class DatasetTests(unittest.TestCase):
 
     class CorrectnessBackend:
         name = "correctness-test"
+        backend_version = "1"
 
         def candidate_execution_signature(
             self, architecture, program, mapping
