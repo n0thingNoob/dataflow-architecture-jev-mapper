@@ -2,6 +2,7 @@
 import json
 from copy import deepcopy
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -25,6 +26,24 @@ def _propose(architecture, program, analyzer, history):
         return raw, None, schema_errors(exc)
     except Exception as exc:
         return None, None, [error("ANALYZER_ERROR", "analyzer", str(exc))]
+
+
+def _execution_signature(architecture, program, mapping, backend, errors):
+    if errors or mapping is None:
+        return None
+    signature = getattr(backend, "execution_signature", None)
+    if signature is None:
+        return None
+    try:
+        value = signature(
+            architecture.model_copy(deep=True),
+            program.model_copy(deep=True),
+            mapping.model_copy(deep=True),
+        )
+        json.dumps(value, allow_nan=False, sort_keys=True)
+        return value
+    except Exception:
+        return None
 
 
 def _execute(architecture, program, mapping, backend, directory, errors, objective_key):
@@ -54,6 +73,7 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         raise InvalidInput(errors)
 
     output.mkdir(parents=True, exist_ok=False)
+    run_id = f"run_{uuid4().hex}"
     history, best, objective_key = [], None, None
     successful_trials = []
 
@@ -71,12 +91,25 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         validation = {"valid": not errors, "errors": errors}
         write_json(directory / "validation.json", validation)
 
-        report = _execute(architecture, program, mapping, backend, directory, errors, objective_key)
+        execution_signature = _execution_signature(
+            architecture, program, mapping, backend, errors
+        )
+        report = _execute(
+            architecture,
+            program,
+            mapping,
+            backend,
+            directory,
+            errors,
+            objective_key,
+        )
         objective = report.objective
         trial = {
+            "run_id": run_id,
             "trial_id": trial_id,
             **inputs,
             "mapping": raw,
+            "execution_signature": execution_signature,
             "validation": validation,
             "report": report.model_dump(),
             "objective": objective.model_dump() if objective else None,
@@ -99,6 +132,7 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
 
     summary = {
         "schema_version": "0.1",
+        "run_id": run_id,
         "backend": backend.name,
         "status": "ok" if successful_trials else "no_successful_result",
         "successful_trial_ids": successful_trials,
