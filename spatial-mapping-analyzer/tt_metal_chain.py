@@ -228,10 +228,6 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                     "PROFILER_CROSS_CHECK_FAILED",
                     "Profiler API duration does not match cpp_device_perf_report.csv",
                 )
-            profiler_report_sha256 = hashlib.sha256(
-                profiler_report.read_bytes()
-            ).hexdigest()
-
             objective = Objective(
                 name="device_kernel_duration",
                 value=float(duration),
@@ -247,7 +243,6 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                 executable_sha256=provenance["probe_binary_sha256"],
                 artifacts={
                     "custom_kernel_bundle_sha256": custom_kernel_bundle_sha256,
-                    "profiler_report_sha256": profiler_report_sha256,
                 },
                 configuration={
                     **provenance["profiler_configuration"],
