@@ -68,14 +68,20 @@ std::filesystem::path kernel_path(const char* relative) {
     return std::filesystem::path(home) / relative;
 }
 
-void write_result(const std::filesystem::path& path, bool passed, uint32_t x, uint32_t y) {
+void write_result(
+    const std::filesystem::path& path,
+    bool passed,
+    const CoreCoord& tt_metal_logical_core,
+    const CoreCoord& worker_core) {
     std::ofstream output(path);
     if (!output) {
         throw std::runtime_error("Cannot open result path");
     }
     output << "{\n"
            << "  \"passed\": " << (passed ? "true" : "false") << ",\n"
-           << "  \"core\": [" << x << ", " << y << "],\n"
+           << "  \"tt_metal_logical_core\": [" << tt_metal_logical_core.x << ", "
+           << tt_metal_logical_core.y << "],\n"
+           << "  \"worker_core\": [" << worker_core.x << ", " << worker_core.y << "],\n"
            << "  \"elements\": " << (tt::constants::TILE_WIDTH * tt::constants::TILE_WIDTH) << "\n"
            << "}\n";
 }
@@ -88,6 +94,7 @@ int main(int argc, char** argv) {
         const CoreCoord core{args.core_x, args.core_y};
 
         auto mesh_device = distributed::MeshDevice::create_unit_mesh(0);
+        const auto worker_core = mesh_device->worker_core_from_logical_core(core);
         distributed::MeshCommandQueue& cq = mesh_device->mesh_command_queue();
         distributed::MeshWorkload workload;
         distributed::MeshCoordinateRange device_range(mesh_device->shape());
@@ -160,7 +167,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        write_result(args.result, passed, args.core_x, args.core_y);
+        write_result(args.result, passed, core, worker_core);
         mesh_device->close();
         return passed ? 0 : 2;
     } catch (const std::exception& error) {
