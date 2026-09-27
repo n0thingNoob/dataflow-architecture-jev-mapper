@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from candidate_generator import MappingSearchCapabilities
 from report import Report, unsupported_metrics
 from specs import fingerprint, write_json
 from workload import check_supported, input_values, lower, reference
@@ -17,6 +18,10 @@ DEFAULT_LIBRARY = ROOT.parent / "third_party/ttsim/src/_out/release_wh/libttsim.
 class TTSimBackend:
     name = "tt-sim-program"
     manifest_filename = "program_execution.json"
+    search_capabilities = MappingSearchCapabilities()
+
+    def execution_signature(self, architecture, program, mapping):
+        return fingerprint(mapping)
 
     def __init__(self, library=None, timeout_seconds=30, inputs=None, seed=0):
         self.library = Path(library).resolve() if library is not None else DEFAULT_LIBRARY
