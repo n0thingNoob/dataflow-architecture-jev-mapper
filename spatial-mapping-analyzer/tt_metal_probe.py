@@ -192,7 +192,7 @@ class TTMetalProbeBackend:
                 "probe_binary_sha256": probe_sha256,
                 "profiler_configuration": profiler_config,
                 "profiler_report": str(
-                    profiler_dir / "cpp_device_perf_report.csv"
+                    profiler_dir / ".logs" / "cpp_device_perf_report.csv"
                 ),
             }
 
