@@ -132,7 +132,7 @@ class TTMetalChainBackend(TTMetalProbeBackend):
             "This runtime does not expose this metric"
         )
         if self.runtime == "device":
-            duration = result.get("device_program_duration_ns")
+            duration = result.get("device_kernel_duration_ns")
             if (
                 result.get("measurement_source") != "tt_metal_device_profiler"
                 or isinstance(duration, bool)
