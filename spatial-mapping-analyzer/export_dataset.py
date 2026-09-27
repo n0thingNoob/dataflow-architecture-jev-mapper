@@ -5,10 +5,13 @@ import json
 from pathlib import Path
 
 from dataset import (
-    ExecutionIdentity,
     MeasuredMappingRecord,
     MeasuredObjective,
-    make_sample_id,
+    RequestedExecutionIdentity,
+    content_hash,
+    make_execution_group_id,
+    make_observation_id,
+    make_program_group_id,
 )
 from mapping_ir import Mapping
 from report import Report
@@ -46,11 +49,17 @@ def _record_from_trial(raw, fallback_run_id):
     if report.mapping_hash != mapping_hash:
         raise ValueError("Measured trial report mapping hash does not match mapping")
 
-    signature = raw.get("execution_signature")
+    signature = raw.get("requested_execution_signature")
     if signature is None:
-        raise ValueError("Measured trial is missing execution_signature")
+        raise ValueError(
+            "Measured trial is missing requested_execution_signature"
+        )
+    if report.observed_execution is None or report.measurement_context is None:
+        raise ValueError(
+            "Measured trial is missing observed execution or measurement context"
+        )
 
-    execution = ExecutionIdentity(
+    requested_execution = RequestedExecutionIdentity(
         backend=report.backend,
         backend_version=report.backend_version,
         signature=signature,
@@ -58,25 +67,29 @@ def _record_from_trial(raw, fallback_run_id):
     measurement = MeasuredObjective.model_validate(objective.model_dump())
     run_id = raw.get("run_id") or fallback_run_id
     trial_id = raw["trial_id"]
-    sample_id = make_sample_id(
-        run_id,
-        trial_id,
-        mapping_hash,
-        execution.model_dump(),
-        measurement.model_dump(),
-    )
 
-    return MeasuredMappingRecord(
-        sample_id=sample_id,
-        run_id=run_id,
-        trial_id=trial_id,
-        architecture=architecture,
-        program=program,
-        mapping=mapping,
-        mapping_hash=mapping_hash,
-        execution=execution,
-        measurement=measurement,
-    )
+    record_data = {
+        "observation_id": make_observation_id(run_id, trial_id),
+        "run_id": run_id,
+        "trial_id": trial_id,
+        "program_group_id": make_program_group_id(program),
+        "execution_group_id": make_execution_group_id(
+            program,
+            architecture,
+            requested_execution.model_dump(),
+            report.observed_execution.model_dump(),
+        ),
+        "architecture": architecture.model_dump(),
+        "program": program.model_dump(),
+        "mapping": mapping.model_dump(),
+        "mapping_hash": mapping_hash,
+        "requested_execution": requested_execution.model_dump(),
+        "observed_execution": report.observed_execution.model_dump(),
+        "measurement_context": report.measurement_context.model_dump(),
+        "measurement": measurement.model_dump(),
+    }
+    record_data["content_hash"] = "content_" + content_hash(record_data)
+    return MeasuredMappingRecord.model_validate(record_data)
 
 
 def load_run_records(run_dir):
@@ -103,22 +116,28 @@ def load_run_records(run_dir):
 
 
 def export_dataset(run_dirs, output):
-    by_id = {}
+    by_observation = {}
     for run_dir in run_dirs:
         for record in load_run_records(run_dir):
-            existing = by_id.get(record.sample_id)
-            if existing is not None and existing != record:
-                raise ValueError(f"Conflicting dataset sample: {record.sample_id}")
-            by_id[record.sample_id] = record
+            existing = by_observation.get(record.observation_id)
+            if (
+                existing is not None
+                and existing.content_hash != record.content_hash
+            ):
+                raise ValueError(
+                    f"Conflicting dataset observation: {record.observation_id}"
+                )
+            by_observation[record.observation_id] = record
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w") as stream:
-        for record in by_id.values():
+        for observation_id in sorted(by_observation):
+            record = by_observation[observation_id]
             stream.write(
                 json.dumps(record.model_dump(), allow_nan=False, sort_keys=True)
                 + "\n"
             )
-    return len(by_id)
+    return len(by_observation)
 
 
 def main():
