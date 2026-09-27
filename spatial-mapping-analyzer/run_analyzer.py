@@ -79,7 +79,7 @@ def main():
             EnumeratingAnalyzer(
                 args.candidate_limit,
                 search_capabilities=backend.search_capabilities,
-                execution_signature=backend.execution_signature,
+                candidate_execution_signature=backend.candidate_execution_signature,
             )
             if args.search
             else PassthroughAnalyzer(args.parallel)
