@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.22...4.2)
 project(spatial_tensix_probe)
 
+option(
+    SPATIAL_TENSIX_ENABLE_DEVICE_PROFILING
+    "Build source-tree TT-Metal with Tracy/device-profiler support"
+    ON
+)
+
 add_executable(spatial_tensix_probe placement_probe.cpp)
 add_executable(spatial_tensix_chain_probe two_core_chain.cpp)
 
@@ -10,6 +16,11 @@ set(SPATIAL_TENSIX_TARGETS
 )
 
 if(TT_METAL_SOURCE_DIR)
+    if(SPATIAL_TENSIX_ENABLE_DEVICE_PROFILING)
+        set(ENABLE_TRACY ON CACHE BOOL "" FORCE)
+    else()
+        set(ENABLE_TRACY OFF CACHE BOOL "" FORCE)
+    endif()
     set(WITH_PYTHON_BINDINGS OFF CACHE BOOL "" FORCE)
     set(ENABLE_DISTRIBUTED OFF CACHE BOOL "" FORCE)
     set(TT_METAL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
