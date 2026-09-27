@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from analyzer import EnumeratingAnalyzer, PassthroughAnalyzer
 from pipeline import run
 from specs import Architecture, Program, read_yaml
+from tt_metal_chain import TTMetalChainBackend
 from tt_metal_probe import TTMetalProbeBackend
 from tt_sim import ROOT, TTSimBackend
 from validator import InvalidInput, error, schema_errors
@@ -19,7 +20,7 @@ from validator import InvalidInput, error, schema_errors
 def main():
     parser = argparse.ArgumentParser(description="Run a tensor/scalar DAG on real TT-Sim")
     parser.add_argument("--arch", type=Path, default=ROOT / "examples/wormhole.yaml")
-    parser.add_argument("--backend", choices=["brisc", "tensix-probe"], default="brisc")
+    parser.add_argument("--backend", choices=["brisc", "tensix-probe", "tensix-chain"], default="brisc")
     parser.add_argument("--program", type=Path, required=True)
     parser.add_argument("--inputs", type=Path, help="JSON: input name -> flat int32 array; otherwise generate seeded inputs")
     parser.add_argument("--parallel", action="store_true", help="Passthrough mode: start dependency-ready regions as soon as possible")
@@ -31,6 +32,7 @@ def main():
     parser.add_argument("--tt-sim-timeout", type=float, default=30)
     parser.add_argument("--tt-metal-home", type=Path)
     parser.add_argument("--tensix-probe-binary", type=Path)
+    parser.add_argument("--tensix-chain-binary", type=Path)
     parser.add_argument("--output", type=Path, help="A new directory; existing results are never overwritten")
     args = parser.parse_args()
 
@@ -44,15 +46,27 @@ def main():
             backend = TTSimBackend(args.tt_sim_library, args.tt_sim_timeout, inputs, args.seed)
         else:
             if args.inputs:
-                raise ValueError("--inputs is not supported by the fixed Tensix placement probe")
-            if args.tt_metal_home is None or args.tensix_probe_binary is None:
-                raise ValueError("Tensix probe requires --tt-metal-home and --tensix-probe-binary")
-            backend = TTMetalProbeBackend(
-                args.tt_metal_home,
-                args.tensix_probe_binary,
-                args.tt_sim_library,
-                args.tt_sim_timeout,
-            )
+                raise ValueError("--inputs is not supported by Tensix probe backends")
+            if args.tt_metal_home is None:
+                raise ValueError("Tensix probe backends require --tt-metal-home")
+            if args.backend == "tensix-probe":
+                if args.tensix_probe_binary is None:
+                    raise ValueError("tensix-probe requires --tensix-probe-binary")
+                backend = TTMetalProbeBackend(
+                    args.tt_metal_home,
+                    args.tensix_probe_binary,
+                    args.tt_sim_library,
+                    args.tt_sim_timeout,
+                )
+            else:
+                if args.tensix_chain_binary is None:
+                    raise ValueError("tensix-chain requires --tensix-chain-binary")
+                backend = TTMetalChainBackend(
+                    args.tt_metal_home,
+                    args.tensix_chain_binary,
+                    args.tt_sim_library,
+                    args.tt_sim_timeout,
+                )
         analyzer = (
             EnumeratingAnalyzer(args.candidate_limit)
             if args.search
