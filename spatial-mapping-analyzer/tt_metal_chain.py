@@ -1,6 +1,7 @@
 """TT-Metal backend for a two-core producer-consumer Tensix chain."""
 from pathlib import Path
 
+from candidate_generator import MappingSearchCapabilities
 from report import Report, unsupported_metrics
 from specs import fingerprint
 from tt_metal_probe import TTMetalProbeBackend, logical_core_to_coord
@@ -55,6 +56,17 @@ class TTMetalChainBackend(TTMetalProbeBackend):
     backend_version = "bf16-add-chain-v1"
     compute_path = "Two-stage Tensix add chain via TT-Metal"
     probe_label = "Tensix chain probe"
+    search_capabilities = MappingSearchCapabilities(
+        topological_order=False,
+        execution_policy=False,
+        placement=True,
+    )
+
+    def execution_signature(self, architecture, program, mapping):
+        first, second, _, coords = check_chain_supported(
+            architecture, program, mapping
+        )
+        return self.name, first.id, second.id, tuple(coords)
 
     def run(self, architecture, program, mapping, workdir):
         workdir = workdir.resolve()
