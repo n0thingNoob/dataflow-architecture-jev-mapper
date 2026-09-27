@@ -75,13 +75,17 @@ class TTMetalProbeBackend:
         probe_binary,
         library=None,
         timeout_seconds=120,
+        runtime="ttsim",
     ):
         self.tt_metal_home = Path(tt_metal_home).resolve()
         self.probe_binary = Path(probe_binary).resolve()
         self.library = Path(library).resolve() if library else DEFAULT_TTSIM_LIBRARY
         if timeout_seconds <= 0:
             raise ValueError("Probe timeout must be positive")
+        if runtime not in {"ttsim", "device"}:
+            raise ValueError("Tensix runtime must be 'ttsim' or 'device'")
         self.timeout_seconds = timeout_seconds
+        self.runtime = runtime
 
     def _failure(self, mapping, code, message, status="error"):
         return Report(
@@ -96,8 +100,6 @@ class TTMetalProbeBackend:
     def _prepare_simulator_directory(self, workdir):
         descriptor = self.tt_metal_home / SOC_DESCRIPTOR_RELATIVE
         for path, label in [
-            (self.tt_metal_home, "TT_METAL_HOME"),
-            (self.probe_binary, "Tensix probe binary"),
             (self.library, "TT-Sim library"),
             (descriptor, "Wormhole SoC descriptor"),
         ]:
@@ -111,6 +113,67 @@ class TTMetalProbeBackend:
         shutil.copy2(descriptor, simulator_dir / "soc_descriptor.yaml")
         return simulator_library
 
+    def _prepare_runtime_environment(self, workdir):
+        for path, label in [
+            (self.tt_metal_home, "TT_METAL_HOME"),
+            (self.probe_binary, "Tensix probe binary"),
+        ]:
+            if not path.exists():
+                raise FileNotFoundError(f"{label} not found: {path}")
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "TT_METAL_HOME": str(self.tt_metal_home),
+                "TT_METAL_FORCE_JIT_COMPILE": "1",
+                "TT_METAL_DISABLE_SFPLOADMACRO": "1",
+            }
+        )
+
+        if self.runtime == "ttsim":
+            simulator_library = self._prepare_simulator_directory(workdir)
+            env.update(
+                {
+                    "TT_METAL_SIMULATOR": str(simulator_library),
+                    "TT_METAL_SIMULATOR_HOME": str(simulator_library.parent),
+                    "TT_METAL_SLOW_DISPATCH_MODE": "1",
+                }
+            )
+            for name in (
+                "SPATIAL_MEASURE_DEVICE",
+                "TT_METAL_DEVICE_PROFILER",
+                "TT_METAL_PROFILER_MID_RUN_DUMP",
+                "TT_METAL_PROFILER_CPP_POST_PROCESS",
+            ):
+                env.pop(name, None)
+            provenance = {
+                "runtime": "ttsim",
+                "ttsim_sha256": hashlib.sha256(
+                    simulator_library.read_bytes()
+                ).hexdigest(),
+            }
+        else:
+            for name in (
+                "TT_METAL_SIMULATOR",
+                "TT_METAL_SIMULATOR_HOME",
+                "TT_METAL_SLOW_DISPATCH_MODE",
+            ):
+                env.pop(name, None)
+            env.update(
+                {
+                    "SPATIAL_MEASURE_DEVICE": "1",
+                    "TT_METAL_DEVICE_PROFILER": "1",
+                    "TT_METAL_PROFILER_MID_RUN_DUMP": "1",
+                    "TT_METAL_PROFILER_CPP_POST_PROCESS": "1",
+                }
+            )
+            provenance = {
+                "runtime": "device",
+                "measurement_source": "tt_metal_device_profiler",
+            }
+
+        return env, provenance
+
     def _run_probe(
         self,
         mapping,
@@ -121,30 +184,17 @@ class TTMetalProbeBackend:
         invocation,
     ):
         try:
-            simulator_library = self._prepare_simulator_directory(workdir)
+            env, provenance = self._prepare_runtime_environment(workdir)
         except (OSError, FileNotFoundError) as exc:
             return None, self._failure(mapping, "PROBE_ENVIRONMENT", str(exc))
 
-        env = os.environ.copy()
-        env.update(
-            {
-                "TT_METAL_HOME": str(self.tt_metal_home),
-                "TT_METAL_SIMULATOR": str(simulator_library),
-                "TT_METAL_SIMULATOR_HOME": str(simulator_library.parent),
-                "TT_METAL_SLOW_DISPATCH_MODE": "1",
-                "TT_METAL_FORCE_JIT_COMPILE": "1",
-                "TT_METAL_DISABLE_SFPLOADMACRO": "1",
-            }
-        )
         write_json(
             workdir / f"{artifact_prefix}_invocation.json",
             {
                 "argv": command,
                 "cwd": str(self.tt_metal_home),
                 **invocation,
-                "ttsim_sha256": hashlib.sha256(
-                    simulator_library.read_bytes()
-                ).hexdigest(),
+                **provenance,
             },
         )
 

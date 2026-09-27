@@ -39,22 +39,23 @@ class TTMetalChainTests(unittest.TestCase):
         )
         self.mapping = generate_candidates(self.arch, self.program, limit=1)[0]
 
-    def backend(self):
+    def backend(self, runtime="ttsim"):
         return TTMetalChainBackend(
             self.tt_metal_home,
             self.probe,
             self.library,
             timeout_seconds=5,
+            runtime=runtime,
         )
 
-    def run_with_result(self, result):
+    def run_with_result(self, result, runtime="ttsim"):
         def fake_run(command, **kwargs):
             result_path = Path(command[command.index("--result") + 1])
             result_path.write_text(json.dumps(result))
             return subprocess.CompletedProcess(command, 0)
 
         with patch("tt_metal_probe.subprocess.run", side_effect=fake_run) as run:
-            report = self.backend().run(
+            report = self.backend(runtime).run(
                 self.arch, self.program, self.mapping, self.workdir
             )
         return report, run
@@ -104,6 +105,61 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertIn("--producer-x", command)
         self.assertIn("--consumer-x", command)
         self.assertIn("--kernel-root", command)
+
+    def test_device_runtime_exposes_measured_profiler_objective(self):
+        result = {
+            "passed": True,
+            "producer_core": [0, 0],
+            "consumer_core": [1, 0],
+            "intermediate_transport": "noc_direct",
+            "intermediate_returned_to_host": False,
+            "elements": 1024,
+            "measurement_source": "tt_metal_device_profiler",
+            "device_kernel_duration_ns": 1234,
+        }
+
+        def fake_run(command, **kwargs):
+            self.assertEqual(kwargs["env"]["SPATIAL_MEASURE_DEVICE"], "1")
+            self.assertEqual(kwargs["env"]["TT_METAL_DEVICE_PROFILER"], "1")
+            self.assertNotIn("TT_METAL_SIMULATOR", kwargs["env"])
+            result_path = Path(command[command.index("--result") + 1])
+            result_path.write_text(json.dumps(result))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("tt_metal_probe.subprocess.run", side_effect=fake_run):
+            report = self.backend("device").run(
+                self.arch, self.program, self.mapping, self.workdir
+            )
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objective.name, "device_kernel_duration")
+        self.assertEqual(report.objective.value, 1234)
+        self.assertEqual(report.objective.unit, "ns")
+        self.assertEqual(report.objective.source, "measured")
+        self.assertEqual(report.metrics["latency"].value, 1234)
+        self.assertEqual(
+            report.extensions["measurement_source"],
+            "tt_metal_device_profiler",
+        )
+        self.assertFalse((self.workdir / "tt_metal_simulator").exists())
+
+    def test_device_runtime_rejects_missing_profiler_measurement(self):
+        report, _ = self.run_with_result(
+            {
+                "passed": True,
+                "producer_core": [0, 0],
+                "consumer_core": [1, 0],
+                "intermediate_transport": "noc_direct",
+                "intermediate_returned_to_host": False,
+                "elements": 1024,
+            },
+            runtime="device",
+        )
+        self.assertEqual(report.status, "error")
+        self.assertEqual(
+            report.extensions["error_code"],
+            "PROBE_RESULT_MISMATCH",
+        )
 
     def test_same_core_mapping_is_rejected(self):
         self.mapping.regions[1].placement = [0]

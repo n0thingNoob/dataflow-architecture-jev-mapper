@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from candidate_generator import MappingSearchCapabilities
-from report import Report, unsupported_metrics
+from report import Metric, Objective, Report, unsupported_metrics
 from specs import fingerprint
 from tt_metal_probe import TTMetalProbeBackend, logical_core_to_coord
 from validator import validate_inputs, validate_mapping
@@ -127,16 +127,43 @@ class TTMetalChainBackend(TTMetalProbeBackend):
             )
 
         passed = result["passed"]
+        objective = None
+        metrics = unsupported_metrics(
+            "This runtime does not expose this metric"
+        )
+        if self.runtime == "device":
+            duration = result.get("device_kernel_duration_ns")
+            if (
+                result.get("measurement_source") != "tt_metal_device_profiler"
+                or isinstance(duration, bool)
+                or not isinstance(duration, (int, float))
+                or duration <= 0
+            ):
+                return self._failure(
+                    mapping,
+                    "PROBE_RESULT_MISMATCH",
+                    "Device result is missing a valid TT-Metal profiler duration",
+                )
+            objective = Objective(
+                name="device_kernel_duration",
+                value=float(duration),
+                unit="ns",
+                source="measured",
+            )
+            metrics["latency"] = Metric(
+                value=float(duration),
+                unit="ns",
+                status="available",
+            )
+
         return Report(
             backend=self.name,
             backend_version=self.backend_version,
             status="ok" if passed else "error",
             mapping_hash=fingerprint(mapping),
             correctness="passed" if passed else "failed",
-            objective=None,
-            metrics=unsupported_metrics(
-                "Two-core chain validates mapped Tensix dataflow but exposes no timing objective"
-            ),
+            objective=objective if passed else None,
+            metrics=metrics,
             message=(
                 f"{first.id}@{tuple(coords[0])} -> {second.id}@{tuple(coords[1])} executed with direct NoC intermediate"
                 if passed
@@ -144,6 +171,12 @@ class TTMetalChainBackend(TTMetalProbeBackend):
             ),
             extensions={
                 "compute_path": "Two Tensix UNPACK/MATH/PACK stages via TT-Metal",
+                "runtime": self.runtime,
+                "measurement_source": (
+                    "tt_metal_device_profiler"
+                    if objective is not None
+                    else "unavailable"
+                ),
                 "intermediate_transport": "noc_direct",
                 "intermediate_returned_to_host": False,
                 "stage_ops": [first.id, second.id],
