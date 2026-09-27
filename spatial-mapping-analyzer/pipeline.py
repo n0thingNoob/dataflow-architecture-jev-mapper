@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from backend_contract import json_safe_signature
 from mapping_ir import Mapping
 from report import Report
 from specs import Architecture, Program, fingerprint, write_json, write_yaml
@@ -28,22 +29,30 @@ def _propose(architecture, program, analyzer, history):
         return None, None, [error("ANALYZER_ERROR", "analyzer", str(exc))]
 
 
-def _execution_signature(architecture, program, mapping, backend, errors):
+def _requested_execution_signature(
+    architecture, program, mapping, backend, errors
+):
     if errors or mapping is None:
-        return None
-    signature = getattr(backend, "execution_signature", None)
+        return None, errors
+    signature = getattr(backend, "candidate_execution_signature", None)
     if signature is None:
-        return None
+        return None, errors
     try:
         value = signature(
             architecture.model_copy(deep=True),
             program.model_copy(deep=True),
             mapping.model_copy(deep=True),
         )
-        json.dumps(value, allow_nan=False, sort_keys=True)
-        return value
-    except Exception:
-        return None
+        return json_safe_signature(value), errors
+    except Exception as exc:
+        return None, [
+            *errors,
+            error(
+                "EXECUTION_SIGNATURE_ERROR",
+                "backend.candidate_execution_signature",
+                str(exc),
+            ),
+        ]
 
 
 def _execute(architecture, program, mapping, backend, directory, errors, objective_key):
@@ -85,15 +94,17 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         write_yaml(directory / "arch.yaml", inputs["architecture"])
         write_yaml(directory / "program.yaml", inputs["program"])
 
-        raw, mapping, errors = _propose(architecture, program, analyzer, history)
+        raw, mapping, errors = _propose(
+            architecture, program, analyzer, history
+        )
         if raw is not None:
             write_yaml(directory / "mapping.yaml", raw)
+        requested_execution_signature, errors = _requested_execution_signature(
+            architecture, program, mapping, backend, errors
+        )
         validation = {"valid": not errors, "errors": errors}
         write_json(directory / "validation.json", validation)
 
-        execution_signature = _execution_signature(
-            architecture, program, mapping, backend, errors
-        )
         report = _execute(
             architecture,
             program,
@@ -109,7 +120,7 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
             "trial_id": trial_id,
             **inputs,
             "mapping": raw,
-            "execution_signature": execution_signature,
+            "requested_execution_signature": requested_execution_signature,
             "validation": validation,
             "report": report.model_dump(),
             "objective": objective.model_dump() if objective else None,
