@@ -2,11 +2,18 @@
 import argparse
 from pathlib import Path
 
+from dataset import MeasuredMappingRecord
 from mapping_ir import Mapping
 from report import Report
 from specs import Architecture, Program, write_json
 
-MODELS = {"arch": Architecture, "program": Program, "mapping": Mapping, "report": Report}
+MODELS = {
+    "arch": Architecture,
+    "program": Program,
+    "mapping": Mapping,
+    "report": Report,
+    "dataset_record": MeasuredMappingRecord,
+}
 
 
 def schema_for(model):
