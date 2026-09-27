@@ -41,7 +41,10 @@ cmake --build build/tensix_probe -j
 ```
 
 If your TT-Metalium package is installed elsewhere, point `CMAKE_PREFIX_PATH`
-at the directory containing `tt-metalium-config.cmake`.
+at the directory containing `tt-metalium-config.cmake`. Source-tree builds keep
+`SPATIAL_TENSIX_ENABLE_DEVICE_PROFILING=ON` by default so physical-device
+measurement can use Tracy. The TT-Sim CI explicitly turns it off because that
+path is correctness-only and should not download profiler-only tooling.
 
 ## Run through the analyzer
 
