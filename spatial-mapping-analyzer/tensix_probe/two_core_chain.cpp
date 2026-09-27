@@ -81,7 +81,7 @@ std::filesystem::path tt_kernel(const char* relative) {
     return std::filesystem::path(home) / relative;
 }
 
-void write_result(const Args& args, bool passed, std::optional<uint64_t> device_program_duration_ns) {
+void write_result(const Args& args, bool passed, std::optional<uint64_t> device_kernel_duration_ns) {
     std::ofstream output(args.result);
     if (!output) {
         throw std::runtime_error("Cannot open result path");
@@ -93,15 +93,15 @@ void write_result(const Args& args, bool passed, std::optional<uint64_t> device_
            << "  \"intermediate_transport\": \"noc_direct\",\n"
            << "  \"intermediate_returned_to_host\": false,\n"
            << "  \"elements\": " << tt::constants::TILE_HW;
-    if (device_program_duration_ns.has_value()) {
+    if (device_kernel_duration_ns.has_value()) {
         output << ",\n"
                << "  \"measurement_source\": \"tt_metal_device_profiler\",\n"
-               << "  \"device_program_duration_ns\": " << *device_program_duration_ns;
+               << "  \"device_kernel_duration_ns\": " << *device_kernel_duration_ns;
     }
     output << "\n}\n";
 }
 
-std::optional<uint64_t> read_device_program_duration_ns(distributed::MeshDevice& mesh_device) {
+std::optional<uint64_t> read_device_kernel_duration_ns(distributed::MeshDevice& mesh_device) {
     const char* enabled = std::getenv("SPATIAL_MEASURE_DEVICE");
     if (enabled == nullptr || std::string(enabled) != "1") {
         return std::nullopt;
@@ -256,8 +256,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        const auto device_program_duration_ns = read_device_program_duration_ns(*mesh_device);
-        write_result(args, passed, device_program_duration_ns);
+        const auto device_kernel_duration_ns = read_device_kernel_duration_ns(*mesh_device);
+        write_result(args, passed, device_kernel_duration_ns);
         mesh_device->close();
         return passed ? 0 : 2;
     } catch (const std::exception& error) {
