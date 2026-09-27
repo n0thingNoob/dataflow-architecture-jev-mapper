@@ -46,6 +46,7 @@ candidate search 由 backend 显式声明哪些 Mapping IR 自由度会改变真
 | `pipeline.py` | proposal → validation → execution → feedback/history |
 | `analyzer.py` | analyzer 策略；未来 learned/Jev analyzer 也放这里 |
 | `candidate_generator.py` | 纯函数、确定性的 executable candidate 枚举 |
+| `backend_contract.py` | backend capabilities、candidate signature 和 observed execution contract |
 | `specs.py` | architecture/program 数据结构 |
 | `mapping_ir.py` | Mapping IR，包括 region 和 logical-core placement |
 | `validator.py` | program/mapping/placement 合法性 |
@@ -75,7 +76,7 @@ y = left + right
 - `report.json`
 - simulator/debug artifacts
 
-整个 run 保存 `history.jsonl` 和 `summary.json`；每个 run 带稳定的 `run_id`，每个 trial 同时持久化 backend `execution_signature`。只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
+整个 run 保存 `history.jsonl` 和 `summary.json`；每个 run 带稳定的 `run_id`，每个 trial 持久化 backend `requested_execution_signature`。backend report 另外保存运行时实际观察到的 `observed_execution`。这两者不可混用。只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
 
 ## 测试
 
@@ -97,7 +98,7 @@ python export_dataset.py \
   --output results/dataset/measured-mappings.jsonl
 ```
 
-exporter 只接受 `status=ok`、`correctness=passed`、`objective.source=measured` 且带 `execution_signature` 的 trial。不同 run 对同一个 effective mapping 的重复测量会保留为独立 observation；重复传入同一个 run 不会重复样本。对应 JSON Schema 由 `export_schemas.py` 输出为 `dataset_record.schema.json`。
+exporter 只接受 `status=ok`、`correctness=passed`、`objective.source=measured`，并同时具备 requested execution signature、observed execution identity 和 measurement context 的 trial。dataset 将 `observation_id`、`content_hash`、`program_group_id`、`execution_group_id` 分开：重复测量保留为独立 observation，同一 observation 内容变化会被视为冲突，后续交叉验证按 program/execution group 防止泄漏。对应 JSON Schema 由 `export_schemas.py` 输出为 `dataset_record.schema.json`。完整 identity/CV 约束见 `ARCHITECTURE.md`。
 
 下一阶段可以在这个 dataset contract 上做 collection/replay 和 baseline model。
 
@@ -107,7 +108,7 @@ exporter 只接受 `status=ok`、`correctness=passed`、`objective.source=measur
 BRISC correctness 路径之外，仓库现在提供一个可选的 TT-Metal/Tensix probe，用来验证：
 
 ```text
-Mapping IR placement -> TT-Metal CoreCoord -> TT-Sim Tensix compute
+Mapping logical core ID -> TT-Metal logical worker CoreCoord -> observed worker CoreCoord -> Tensix compute
 ```
 
 它支持单个 32x32 BF16 add placement probe，以及两个不同 Tensix core 上的两级 BF16 add chain；chain 的中间 tile 直接通过 NoC 传递，不返回 host。TT-Sim 模式只验证 correctness/placement；真实 device 模式下，两核 chain 会读取 TT-Metal device profiler 的 kernel duration 并提供 measured objective。search 会按 backend execution signature 去重，避免重复运行 lowering 后相同的 placement。构建和运行方法见
