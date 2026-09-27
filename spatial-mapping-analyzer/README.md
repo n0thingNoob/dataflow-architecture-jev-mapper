@@ -31,12 +31,12 @@ python run_analyzer.py \
   --search --candidate-limit 12 --iterations 12
 ```
 
-当前 candidate generator 只使用 backend 已经能忠实执行的自由度：
-- 合法 topological order
-- serial / dependency-parallel execution policy
-- 显式 logical-core placement
+candidate search 由 backend 显式声明哪些 Mapping IR 自由度会改变真实执行，并用 backend execution signature 去掉 lowering 后等价的候选。当前：
+- BRISC 搜索合法 topological order、execution policy 和 logical-core placement。
+- Tensix placement probe 只搜索 placement。
+- 两核 Tensix chain 只搜索 producer/consumer placement；不会把未下沉到 TT-Metal 的 execution policy 当成不同候选。
 
-暂不生成 fusion 或 multi-core region，因为当前 BRISC backend 还不能忠实执行这些 mapping。BRISC 路径现在只做 correctness：不产生 ranking objective，也不输出 `best_mapping.yaml`。TT-Sim 的 API steps 仅作调度诊断，不作为硬件 cycles。
+暂不生成 fusion 或 multi-core region。BRISC 路径现在只做 correctness：不产生 ranking objective，也不输出 `best_mapping.yaml`。TT-Sim 的 API steps 仅作调度诊断，不作为硬件 cycles。
 
 ## 代码阅读顺序
 
@@ -97,5 +97,5 @@ BRISC correctness 路径之外，仓库现在提供一个可选的 TT-Metal/Tens
 Mapping IR placement -> TT-Metal CoreCoord -> TT-Sim Tensix compute
 ```
 
-它目前只支持一个 32x32 BF16 add，仍然不提供 timing objective。构建和运行方法见
+它支持单个 32x32 BF16 add placement probe，以及两个不同 Tensix core 上的两级 BF16 add chain；chain 的中间 tile 直接通过 NoC 传递，不返回 host。两条路径都只验证 correctness/placement，不提供 timing objective。search 会按 backend execution signature 去重，避免重复运行 lowering 后相同的 placement。构建和运行方法见
 `tensix_probe/README.md`。TT-Metal 作为外部依赖使用，不作为本仓库 submodule。

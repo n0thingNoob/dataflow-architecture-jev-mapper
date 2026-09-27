@@ -51,6 +51,18 @@ class TTMetalProbeTests(unittest.TestCase):
             timeout_seconds=5,
         )
 
+    def test_search_contract_only_varies_placement(self):
+        backend = self.backend()
+        self.assertFalse(backend.search_capabilities.topological_order)
+        self.assertFalse(backend.search_capabilities.execution_policy)
+        self.assertTrue(backend.search_capabilities.placement)
+
+        first = backend.execution_signature(self.arch, self.program, self.mapping)
+        moved = self.mapping.model_copy(deep=True)
+        moved.regions[0].placement = [1]
+        second = backend.execution_signature(self.arch, self.program, moved)
+        self.assertNotEqual(first, second)
+
     def test_logical_core_maps_row_major(self):
         self.assertEqual(logical_core_to_coord(self.arch, 0), (0, 0))
         self.assertEqual(logical_core_to_coord(self.arch, 3), (1, 1))

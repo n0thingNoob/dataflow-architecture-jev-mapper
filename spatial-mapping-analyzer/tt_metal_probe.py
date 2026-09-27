@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from candidate_generator import MappingSearchCapabilities
 from report import Report, unsupported_metrics
 from specs import fingerprint, write_json
 from validator import validate_inputs, validate_mapping
@@ -58,6 +59,15 @@ class TTMetalProbeBackend:
     backend_version = "bf16-add-v1"
     compute_path = "Tensix via TT-Metal"
     probe_label = "Tensix probe"
+    search_capabilities = MappingSearchCapabilities(
+        topological_order=False,
+        execution_policy=False,
+        placement=True,
+    )
+
+    def execution_signature(self, architecture, program, mapping):
+        core_x, core_y = check_probe_supported(architecture, program, mapping)
+        return self.name, core_x, core_y
 
     def __init__(
         self,

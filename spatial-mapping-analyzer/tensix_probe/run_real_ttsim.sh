@@ -109,7 +109,7 @@ for trial_id in summary["successful_trial_ids"]:
     assert report["objective"] is None, report
     cores.append(tuple(report["extensions"]["physical_core"]))
 
-assert len(set(cores)) >= 2, cores
+assert len(set(cores)) == 4, cores
 print("Verified real Tensix placement cores:", cores)
 PY
 
@@ -147,6 +147,6 @@ for trial_id in summary["successful_trial_ids"]:
     assert producer != consumer, ext
     pairs.append((producer, consumer))
 
-assert len(set(pairs)) >= 2, pairs
+assert len(set(pairs)) == 4, pairs
 print("Verified real two-core Tensix chain placements:", pairs)
 PY
