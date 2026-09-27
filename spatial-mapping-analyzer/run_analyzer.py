@@ -33,6 +33,12 @@ def main():
     parser.add_argument("--tt-metal-home", type=Path)
     parser.add_argument("--tensix-probe-binary", type=Path)
     parser.add_argument("--tensix-chain-binary", type=Path)
+    parser.add_argument(
+        "--tensix-runtime",
+        choices=["ttsim", "device"],
+        default="ttsim",
+        help="Run Tensix probes on TT-Sim or a real device; measured objectives require device",
+    )
     parser.add_argument("--output", type=Path, help="A new directory; existing results are never overwritten")
     args = parser.parse_args()
 
@@ -57,6 +63,7 @@ def main():
                     args.tensix_probe_binary,
                     args.tt_sim_library,
                     args.tt_sim_timeout,
+                    runtime=args.tensix_runtime,
                 )
             else:
                 if args.tensix_chain_binary is None:
@@ -66,6 +73,7 @@ def main():
                     args.tensix_chain_binary,
                     args.tt_sim_library,
                     args.tt_sim_timeout,
+                    runtime=args.tensix_runtime,
                 )
         analyzer = (
             EnumeratingAnalyzer(
