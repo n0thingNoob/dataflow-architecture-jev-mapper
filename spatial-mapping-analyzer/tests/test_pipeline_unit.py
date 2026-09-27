@@ -100,6 +100,7 @@ class PipelineUnitTests(unittest.TestCase):
     def test_execute_rejects_objective_definition_change(self):
         class Backend:
             name = "test"
+            backend_version = "1"
 
             def run(inner, arch, program, mapping, directory):
                 return Report(
@@ -128,6 +129,7 @@ class PipelineUnitTests(unittest.TestCase):
     def test_success_without_objective_is_still_a_successful_run(self):
         class Backend:
             name = "correctness-only"
+            backend_version = "1"
 
             def run(inner, arch, program, mapping, directory):
                 return Report(
@@ -167,6 +169,7 @@ class PipelineUnitTests(unittest.TestCase):
     def test_run_records_measured_cost_and_selects_lowest(self):
         class Backend:
             name = "measured-test"
+            backend_version = "1"
 
             def __init__(self):
                 self.values = iter([9, 4, 7])
