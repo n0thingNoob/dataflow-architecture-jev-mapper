@@ -1,8 +1,4 @@
-"""Optional TT-Metal backend for validating Mapping IR -> Tensix core placement.
-
-This backend is deliberately correctness-only. It requires an externally built
-TT-Metal installation and the small spatial_tensix_probe executable.
-"""
+"""Optional TT-Metal backend for validating Mapping IR -> Tensix placement."""
 import hashlib
 import json
 import os
@@ -10,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from candidate_generator import MappingSearchCapabilities
+from backend_contract import BackendCapabilities, ObservedExecutionIdentity
 from report import Report, unsupported_metrics
 from specs import fingerprint, write_json
 from validator import validate_inputs, validate_mapping
@@ -20,7 +16,7 @@ DEFAULT_TTSIM_LIBRARY = ROOT.parent / "third_party/ttsim/src/_out/release_wh/lib
 SOC_DESCRIPTOR_RELATIVE = Path("tt_metal/soc_descriptors/wormhole_b0_80_arch.yaml")
 
 
-def logical_core_to_coord(architecture, logical_core):
+def logical_core_id_to_tt_metal_logical_core(architecture, logical_core):
     if logical_core < 0 or logical_core >= architecture.available_cores:
         raise ValueError("Logical core is outside architecture capacity")
     x = logical_core % architecture.grid.cols
@@ -48,24 +44,29 @@ def check_probe_supported(architecture, program, mapping):
 
     op = program.ops[0]
     tensors = [program.tensors[name] for name in [*op.inputs, op.output]]
-    if any(tensor.dtype != "bfloat16" or tensor.shape != [32, 32] for tensor in tensors):
+    if any(
+        tensor.dtype != "bfloat16" or tensor.shape != [32, 32]
+        for tensor in tensors
+    ):
         raise ValueError("Tensix probe supports one 32x32 BF16 tile per tensor")
 
-    return logical_core_to_coord(architecture, region.placement[0])
+    return logical_core_id_to_tt_metal_logical_core(
+        architecture, region.placement[0]
+    )
 
 
 class TTMetalProbeBackend:
     name = "tt-metal-tensix-probe"
-    backend_version = "bf16-add-v1"
+    backend_version = "bf16-add-v2"
     compute_path = "Tensix via TT-Metal"
     probe_label = "Tensix probe"
-    search_capabilities = MappingSearchCapabilities(
+    search_capabilities = BackendCapabilities(
         topological_order=False,
         execution_policy=False,
         placement=True,
     )
 
-    def execution_signature(self, architecture, program, mapping):
+    def candidate_execution_signature(self, architecture, program, mapping):
         core_x, core_y = check_probe_supported(architecture, program, mapping)
         return self.name, core_x, core_y
 
@@ -76,16 +77,24 @@ class TTMetalProbeBackend:
         library=None,
         timeout_seconds=120,
         runtime="ttsim",
+        tt_metal_revision=None,
     ):
         self.tt_metal_home = Path(tt_metal_home).resolve()
         self.probe_binary = Path(probe_binary).resolve()
-        self.library = Path(library).resolve() if library else DEFAULT_TTSIM_LIBRARY
+        self.library = (
+            Path(library).resolve() if library else DEFAULT_TTSIM_LIBRARY
+        )
         if timeout_seconds <= 0:
             raise ValueError("Probe timeout must be positive")
         if runtime not in {"ttsim", "device"}:
             raise ValueError("Tensix runtime must be 'ttsim' or 'device'")
+        if runtime == "device" and not tt_metal_revision:
+            raise ValueError(
+                "Device runtime requires an explicit TT-Metal revision"
+            )
         self.timeout_seconds = timeout_seconds
         self.runtime = runtime
+        self.tt_metal_revision = tt_metal_revision
 
     def _failure(self, mapping, code, message, status="error"):
         return Report(
@@ -121,6 +130,7 @@ class TTMetalProbeBackend:
             if not path.exists():
                 raise FileNotFoundError(f"{label} not found: {path}")
 
+        probe_sha256 = hashlib.sha256(self.probe_binary.read_bytes()).hexdigest()
         env = os.environ.copy()
         env.update(
             {
@@ -148,6 +158,7 @@ class TTMetalProbeBackend:
                 env.pop(name, None)
             provenance = {
                 "runtime": "ttsim",
+                "probe_binary_sha256": probe_sha256,
                 "ttsim_sha256": hashlib.sha256(
                     simulator_library.read_bytes()
                 ).hexdigest(),
@@ -159,17 +170,23 @@ class TTMetalProbeBackend:
                 "TT_METAL_SLOW_DISPATCH_MODE",
             ):
                 env.pop(name, None)
+            profiler_config = {
+                "TT_METAL_DEVICE_PROFILER": "1",
+                "TT_METAL_PROFILER_MID_RUN_DUMP": "1",
+                "TT_METAL_PROFILER_CPP_POST_PROCESS": "1",
+            }
             env.update(
                 {
                     "SPATIAL_MEASURE_DEVICE": "1",
-                    "TT_METAL_DEVICE_PROFILER": "1",
-                    "TT_METAL_PROFILER_MID_RUN_DUMP": "1",
-                    "TT_METAL_PROFILER_CPP_POST_PROCESS": "1",
+                    **profiler_config,
                 }
             )
             provenance = {
                 "runtime": "device",
                 "measurement_source": "tt_metal_device_profiler",
+                "tt_metal_revision": self.tt_metal_revision,
+                "probe_binary_sha256": probe_sha256,
+                "profiler_configuration": profiler_config,
             }
 
         return env, provenance
@@ -185,8 +202,10 @@ class TTMetalProbeBackend:
     ):
         try:
             env, provenance = self._prepare_runtime_environment(workdir)
-        except (OSError, FileNotFoundError) as exc:
-            return None, self._failure(mapping, "PROBE_ENVIRONMENT", str(exc))
+        except OSError as exc:
+            return None, None, self._failure(
+                mapping, "PROBE_ENVIRONMENT", str(exc)
+            )
 
         write_json(
             workdir / f"{artifact_prefix}_invocation.json",
@@ -212,20 +231,22 @@ class TTMetalProbeBackend:
                     check=False,
                 )
             if process.returncode != 0:
-                return None, self._failure(
+                return None, None, self._failure(
                     mapping,
                     "PROBE_FAILED",
                     f"{self.probe_label} exited with {process.returncode}",
                 )
-            return json.loads(result_path.read_text()), None
+            return json.loads(result_path.read_text()), provenance, None
         except subprocess.TimeoutExpired:
-            return None, self._failure(
+            return None, None, self._failure(
                 mapping,
                 "PROBE_TIMEOUT",
                 f"{self.probe_label} exceeded {self.timeout_seconds:g} seconds",
             )
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            return None, self._failure(mapping, "PROBE_RESULT_ERROR", str(exc))
+        except (OSError, ValueError) as exc:
+            return None, None, self._failure(
+                mapping, "PROBE_RESULT_ERROR", str(exc)
+            )
 
     def run(self, architecture, program, mapping, workdir):
         workdir = workdir.resolve()
@@ -238,6 +259,7 @@ class TTMetalProbeBackend:
                 mapping, "UNSUPPORTED_PROGRAM", str(exc), status="unsupported"
             )
 
+        tt_metal_logical_core = [core_x, core_y]
         result_path = workdir / "tensix_probe_result.json"
         command = [
             str(self.probe_binary),
@@ -248,28 +270,43 @@ class TTMetalProbeBackend:
             "--result",
             str(result_path),
         ]
-        result, failure = self._run_probe(
+        result, provenance, failure = self._run_probe(
             mapping,
             workdir,
             command,
             result_path,
             "tensix_probe",
-            {"core": [core_x, core_y]},
+            {
+                "mapping_logical_core_id": mapping.regions[0].placement[0],
+                "tt_metal_logical_core": tt_metal_logical_core,
+            },
         )
         if failure:
             return failure
 
         if (
             not isinstance(result, dict)
-            or result.get("core") != [core_x, core_y]
+            or result.get("tt_metal_logical_core") != tt_metal_logical_core
+            or not isinstance(result.get("worker_core"), list)
+            or len(result["worker_core"]) != 2
             or result.get("elements") != 1024
             or type(result.get("passed")) is not bool
         ):
             return self._failure(
-                mapping, "PROBE_RESULT_MISMATCH", "Probe result does not match requested mapping"
+                mapping,
+                "PROBE_RESULT_MISMATCH",
+                "Probe result does not match requested mapping",
             )
 
         passed = result["passed"]
+        observed_execution = ObservedExecutionIdentity(
+            kind="tt-metal-worker-core-v1",
+            value={
+                "mapping_logical_core_id": mapping.regions[0].placement[0],
+                "tt_metal_logical_core": tt_metal_logical_core,
+                "worker_core": result["worker_core"],
+            },
+        )
         return Report(
             backend=self.name,
             backend_version=self.backend_version,
@@ -277,19 +314,23 @@ class TTMetalProbeBackend:
             mapping_hash=fingerprint(mapping),
             correctness="passed" if passed else "failed",
             objective=None,
+            observed_execution=observed_execution,
             metrics=unsupported_metrics(
                 "Placement probe validates Tensix execution but does not expose a timing objective"
             ),
             message=(
-                f"BF16 add executed on Tensix core ({core_x}, {core_y})"
+                f"BF16 add executed on TT-Metal logical core {(core_x, core_y)}"
                 if passed
                 else "Tensix BF16 add result mismatch"
             ),
             extensions={
                 "compute_path": "Tensix UNPACK/MATH/PACK via TT-Metal",
                 "transfers": "TT-Metal DRAM and circular buffers",
-                "logical_core": mapping.regions[0].placement[0],
-                "physical_core": [core_x, core_y],
+                "runtime": self.runtime,
+                "mapping_logical_core_id": mapping.regions[0].placement[0],
+                "tt_metal_logical_core": tt_metal_logical_core,
+                "worker_core": result["worker_core"],
+                "runtime_provenance": provenance,
                 "probe_result": result,
             },
         )

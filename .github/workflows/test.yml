@@ -1,5 +1,12 @@
 name: Program E2E
-on: [push, pull_request]
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: program-e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -31,7 +38,7 @@ jobs:
 
       - name: Unit and integration tests with coverage
         run: |
-          coverage run --branch             --source=analyzer,candidate_generator,dataset,mapping_ir,pipeline,report,specs,tt_metal_chain,tt_metal_probe,validator,workload             -m unittest discover -s tests -v
+          coverage run --branch             --source=analyzer,backend_contract,candidate_generator,dataset,export_dataset,mapping_ir,pipeline,report,specs,tt_metal_chain,tt_metal_probe,validator,workload             -m unittest discover -s tests -v
           coverage report --show-missing --fail-under=75
 
       - run: python export_schemas.py
@@ -52,7 +59,8 @@ jobs:
           path: spatial-mapping-analyzer/results/
 
 
-  tensix-real:
+  tt-metal-ttsim:
+    needs: test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -104,13 +112,13 @@ jobs:
           cp "$TT_METAL_HOME/tt_metal/soc_descriptors/wormhole_b0_80_arch.yaml" \
             "$GITHUB_WORKSPACE/.ci/ttsim/soc_descriptor.yaml"
 
-      - name: Build and run real TT-Metal/TTSim placement probe
+      - name: Build and run TT-Metal on pinned TT-Sim
         run: bash spatial-mapping-analyzer/tensix_probe/run_real_ttsim.sh
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: tensix-real-probe
+          name: tt-metal-ttsim-probe
           path: |
             spatial-mapping-analyzer/results/ci-tensix/
             spatial-mapping-analyzer/results/ci-tensix-chain/

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from backend_contract import json_safe_signature
 from mapping_ir import Mapping
 from report import Report
 from specs import Architecture, Program, fingerprint, write_json, write_yaml
@@ -28,34 +29,51 @@ def _propose(architecture, program, analyzer, history):
         return None, None, [error("ANALYZER_ERROR", "analyzer", str(exc))]
 
 
-def _execution_signature(architecture, program, mapping, backend, errors):
+def _requested_execution_signature(
+    architecture, program, mapping, backend, errors
+):
     if errors or mapping is None:
-        return None
-    signature = getattr(backend, "execution_signature", None)
+        return None, errors
+    signature = getattr(backend, "candidate_execution_signature", None)
     if signature is None:
-        return None
+        return None, errors
     try:
         value = signature(
             architecture.model_copy(deep=True),
             program.model_copy(deep=True),
             mapping.model_copy(deep=True),
         )
-        json.dumps(value, allow_nan=False, sort_keys=True)
-        return value
-    except Exception:
-        return None
+        return json_safe_signature(value), errors
+    except Exception as exc:
+        return None, [
+            *errors,
+            error(
+                "EXECUTION_SIGNATURE_ERROR",
+                "backend.candidate_execution_signature",
+                str(exc),
+            ),
+        ]
 
 
 def _execute(architecture, program, mapping, backend, directory, errors, objective_key):
-    report_fields = {"backend": backend.name, "backend_version": "unknown",
-                     "mapping_hash": fingerprint(mapping) if mapping is not None else "unavailable"}
+    report_fields = {
+        "backend": backend.name,
+        "backend_version": getattr(backend, "backend_version", "unknown"),
+        "mapping_hash": (
+            fingerprint(mapping) if mapping is not None else "unavailable"
+        ),
+    }
     if errors:
         return Report(**report_fields, status="skipped", message="Mapping validation failed; backend was not invoked")
     try:
         result = backend.run(architecture.model_copy(deep=True), program.model_copy(deep=True),
                              mapping.model_copy(deep=True), directory)
         report = Report.model_validate(result.model_dump() if isinstance(result, Report) else result)
-        if report.mapping_hash != report_fields["mapping_hash"] or report.backend != backend.name:
+        if (
+            report.mapping_hash != report_fields["mapping_hash"]
+            or report.backend != backend.name
+            or report.backend_version != report_fields["backend_version"]
+        ):
             raise ValueError("Backend report identity does not match this trial")
         if report.objective and objective_key is not None and report.objective_key() != objective_key:
             raise ValueError("Cannot compare different objective definitions in one run")
@@ -85,15 +103,17 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         write_yaml(directory / "arch.yaml", inputs["architecture"])
         write_yaml(directory / "program.yaml", inputs["program"])
 
-        raw, mapping, errors = _propose(architecture, program, analyzer, history)
+        raw, mapping, errors = _propose(
+            architecture, program, analyzer, history
+        )
         if raw is not None:
             write_yaml(directory / "mapping.yaml", raw)
+        requested_execution_signature, errors = _requested_execution_signature(
+            architecture, program, mapping, backend, errors
+        )
         validation = {"valid": not errors, "errors": errors}
         write_json(directory / "validation.json", validation)
 
-        execution_signature = _execution_signature(
-            architecture, program, mapping, backend, errors
-        )
         report = _execute(
             architecture,
             program,
@@ -109,7 +129,7 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
             "trial_id": trial_id,
             **inputs,
             "mapping": raw,
-            "execution_signature": execution_signature,
+            "requested_execution_signature": requested_execution_signature,
             "validation": validation,
             "report": report.model_dump(),
             "objective": objective.model_dump() if objective else None,

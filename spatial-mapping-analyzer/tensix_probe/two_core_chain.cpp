@@ -81,15 +81,26 @@ std::filesystem::path tt_kernel(const char* relative) {
     return std::filesystem::path(home) / relative;
 }
 
-void write_result(const Args& args, bool passed, std::optional<uint64_t> device_kernel_duration_ns) {
+void write_result(
+    const Args& args,
+    bool passed,
+    const CoreCoord& producer_worker_core,
+    const CoreCoord& consumer_worker_core,
+    std::optional<uint64_t> device_kernel_duration_ns) {
     std::ofstream output(args.result);
     if (!output) {
         throw std::runtime_error("Cannot open result path");
     }
     output << "{\n"
            << "  \"passed\": " << (passed ? "true" : "false") << ",\n"
-           << "  \"producer_core\": [" << args.producer.x << ", " << args.producer.y << "],\n"
-           << "  \"consumer_core\": [" << args.consumer.x << ", " << args.consumer.y << "],\n"
+           << "  \"producer_tt_metal_logical_core\": [" << args.producer.x << ", "
+           << args.producer.y << "],\n"
+           << "  \"consumer_tt_metal_logical_core\": [" << args.consumer.x << ", "
+           << args.consumer.y << "],\n"
+           << "  \"producer_worker_core\": [" << producer_worker_core.x << ", "
+           << producer_worker_core.y << "],\n"
+           << "  \"consumer_worker_core\": [" << consumer_worker_core.x << ", "
+           << consumer_worker_core.y << "],\n"
            << "  \"intermediate_transport\": \"noc_direct\",\n"
            << "  \"intermediate_returned_to_host\": false,\n"
            << "  \"elements\": " << tt::constants::TILE_HW;
@@ -257,7 +268,12 @@ int main(int argc, char** argv) {
         }
 
         const auto device_kernel_duration_ns = read_device_kernel_duration_ns(*mesh_device);
-        write_result(args, passed, device_kernel_duration_ns);
+        write_result(
+            args,
+            passed,
+            producer_physical,
+            consumer_physical,
+            device_kernel_duration_ns);
         mesh_device->close();
         return passed ? 0 : 2;
     } catch (const std::exception& error) {

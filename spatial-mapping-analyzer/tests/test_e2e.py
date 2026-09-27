@@ -69,6 +69,7 @@ class E2ETests(unittest.TestCase):
 
         class Scores:
             name = "test"
+            backend_version = "test"
             values = iter([None, 3, 1, 1])
 
             def run(inner, arch, program, mapping, directory):

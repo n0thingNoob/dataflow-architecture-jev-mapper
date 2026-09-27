@@ -46,6 +46,11 @@ class TTMetalChainTests(unittest.TestCase):
             self.library,
             timeout_seconds=5,
             runtime=runtime,
+            tt_metal_revision=(
+                "038c8bbd192aa56a8ffaf6f7010f46d0b99eeca0"
+                if runtime == "device"
+                else None
+            ),
         )
 
     def run_with_result(self, result, runtime="ttsim"):
@@ -66,11 +71,11 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertFalse(backend.search_capabilities.execution_policy)
         self.assertTrue(backend.search_capabilities.placement)
 
-        first = backend.execution_signature(self.arch, self.program, self.mapping)
+        first = backend.candidate_execution_signature(self.arch, self.program, self.mapping)
         moved = self.mapping.model_copy(deep=True)
         moved.regions[0].placement = [1]
         moved.regions[1].placement = [2]
-        second = backend.execution_signature(self.arch, self.program, moved)
+        second = backend.candidate_execution_signature(self.arch, self.program, moved)
         self.assertNotEqual(first, second)
 
     def test_chain_contract_extracts_two_distinct_stages(self):
@@ -85,8 +90,10 @@ class TTMetalChainTests(unittest.TestCase):
         report, run = self.run_with_result(
             {
                 "passed": True,
-                "producer_core": [0, 0],
-                "consumer_core": [1, 0],
+                "producer_tt_metal_logical_core": [0, 0],
+                "consumer_tt_metal_logical_core": [1, 0],
+                "producer_worker_core": [1, 1],
+                "consumer_worker_core": [2, 1],
                 "intermediate_transport": "noc_direct",
                 "intermediate_returned_to_host": False,
                 "elements": 1024,
@@ -96,8 +103,19 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.correctness, "passed")
         self.assertIsNone(report.objective)
-        self.assertEqual(report.extensions["logical_cores"], [0, 1])
-        self.assertEqual(report.extensions["physical_cores"], [[0, 0], [1, 0]])
+        self.assertEqual(
+            report.extensions["mapping_logical_core_ids"], [0, 1]
+        )
+        self.assertEqual(
+            report.extensions["tt_metal_logical_cores"], [[0, 0], [1, 0]]
+        )
+        self.assertEqual(
+            report.extensions["worker_cores"], [[1, 1], [2, 1]]
+        )
+        self.assertEqual(
+            report.observed_execution.value["worker_cores"],
+            [[1, 1], [2, 1]],
+        )
         self.assertEqual(report.extensions["intermediate_transport"], "noc_direct")
         self.assertFalse(report.extensions["intermediate_returned_to_host"])
 
@@ -106,11 +124,23 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertIn("--consumer-x", command)
         self.assertIn("--kernel-root", command)
 
+    def test_device_runtime_requires_explicit_tt_metal_revision(self):
+        with self.assertRaisesRegex(ValueError, "revision"):
+            TTMetalChainBackend(
+                self.tt_metal_home,
+                self.probe,
+                self.library,
+                timeout_seconds=5,
+                runtime="device",
+            )
+
     def test_device_runtime_exposes_measured_profiler_objective(self):
         result = {
             "passed": True,
-            "producer_core": [0, 0],
-            "consumer_core": [1, 0],
+            "producer_tt_metal_logical_core": [0, 0],
+            "consumer_tt_metal_logical_core": [1, 0],
+            "producer_worker_core": [1, 1],
+            "consumer_worker_core": [2, 1],
             "intermediate_transport": "noc_direct",
             "intermediate_returned_to_host": False,
             "elements": 1024,
@@ -138,6 +168,18 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertEqual(report.objective.source, "measured")
         self.assertEqual(report.metrics["latency"].value, 1234)
         self.assertEqual(
+            report.measurement_context.measurement_version,
+            "tt-metal-device-kernel-duration-v1",
+        )
+        self.assertEqual(
+            report.measurement_context.implementation_revision,
+            "038c8bbd192aa56a8ffaf6f7010f46d0b99eeca0",
+        )
+        self.assertIn(
+            "custom_kernel_bundle_sha256",
+            report.measurement_context.artifacts,
+        )
+        self.assertEqual(
             report.extensions["measurement_source"],
             "tt_metal_device_profiler",
         )
@@ -147,8 +189,10 @@ class TTMetalChainTests(unittest.TestCase):
         report, _ = self.run_with_result(
             {
                 "passed": True,
-                "producer_core": [0, 0],
-                "consumer_core": [1, 0],
+                "producer_tt_metal_logical_core": [0, 0],
+                "consumer_tt_metal_logical_core": [1, 0],
+                "producer_worker_core": [1, 1],
+                "consumer_worker_core": [2, 1],
                 "intermediate_transport": "noc_direct",
                 "intermediate_returned_to_host": False,
                 "elements": 1024,
@@ -177,8 +221,10 @@ class TTMetalChainTests(unittest.TestCase):
         report, _ = self.run_with_result(
             {
                 "passed": True,
-                "producer_core": [0, 0],
-                "consumer_core": [1, 0],
+                "producer_tt_metal_logical_core": [0, 0],
+                "consumer_tt_metal_logical_core": [1, 0],
+                "producer_worker_core": [1, 1],
+                "consumer_worker_core": [2, 1],
                 "intermediate_transport": "host",
                 "intermediate_returned_to_host": True,
                 "elements": 1024,

@@ -1,6 +1,5 @@
 """Deterministic, bounded mapping candidates supported by a backend."""
-from dataclasses import dataclass
-
+from backend_contract import BackendCapabilities
 from mapping_ir import Mapping, Region
 from specs import fingerprint
 
@@ -8,15 +7,6 @@ POLICIES = (
     "exclusive_cores_tensor_barrier",
     "exclusive_cores_dependency_barrier",
 )
-
-
-@dataclass(frozen=True)
-class MappingSearchCapabilities:
-    """Mapping dimensions that produce distinct executions for a backend."""
-
-    topological_order: bool = True
-    execution_policy: bool = True
-    placement: bool = True
 
 
 def _topological_orders(program, limit):
@@ -58,7 +48,7 @@ def generate_candidates(
     program,
     limit=16,
     capabilities=None,
-    candidate_key=None,
+    candidate_execution_signature=None,
 ):
     """Generate distinct mappings in dimensions the selected backend can execute."""
     if limit < 1:
@@ -66,7 +56,7 @@ def generate_candidates(
     if len(program.ops) > architecture.available_cores:
         raise ValueError("Current candidate generator requires one available core per op")
 
-    capabilities = capabilities or MappingSearchCapabilities()
+    capabilities = capabilities or BackendCapabilities()
     orders = (
         _topological_orders(program, limit)
         if capabilities.topological_order
@@ -84,7 +74,9 @@ def generate_candidates(
 
     candidates = []
     seen = set()
+    canonical_ops = tuple(op.id for op in program.ordered_ops())
     for placement in placements:
+        placement_by_op = dict(zip(canonical_ops, placement))
         for order in orders:
             for policy in policies:
                 mapping = Mapping(
@@ -97,14 +89,14 @@ def generate_candidates(
                             id=f"region_{op_id}",
                             ops=[op_id],
                             cores=1,
-                            placement=[core_id],
+                            placement=[placement_by_op[op_id]],
                         )
-                        for op_id, core_id in zip(order, placement)
+                        for op_id in order
                     ],
                 )
                 key = (
-                    candidate_key(architecture, program, mapping)
-                    if candidate_key is not None
+                    candidate_execution_signature(architecture, program, mapping)
+                    if candidate_execution_signature is not None
                     else fingerprint(mapping)
                 )
                 try:

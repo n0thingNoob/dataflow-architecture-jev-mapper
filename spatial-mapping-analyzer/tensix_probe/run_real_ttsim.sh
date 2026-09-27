@@ -39,6 +39,7 @@ fi
 CMAKE_EXTRA_ARGS=()
 if [[ -n "${TT_METAL_SOURCE_DIR:-}" ]]; then
     CMAKE_EXTRA_ARGS+=("-DTT_METAL_SOURCE_DIR=$TT_METAL_SOURCE_DIR")
+    CMAKE_EXTRA_ARGS+=("-DSPATIAL_TENSIX_ENABLE_DEVICE_PROFILING=OFF")
     CMAKE_EXTRA_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$TT_METAL_SOURCE_DIR/cmake/x86_64-linux-clang-20-libstdcpp-toolchain.cmake")
     CONFIG="source-tree"
 else
@@ -102,16 +103,26 @@ assert summary["status"] == "ok", summary
 assert len(summary["successful_trial_ids"]) == 4, summary
 assert summary["best_trial_id"] is None, summary
 
-cores = []
+logical_cores = []
+worker_cores = []
 for trial_id in summary["successful_trial_ids"]:
     report = json.loads((root / trial_id / "report.json").read_text())
     assert report["status"] == "ok", report
     assert report["correctness"] == "passed", report
     assert report["objective"] is None, report
-    cores.append(tuple(report["extensions"]["physical_core"]))
+    ext = report["extensions"]
+    logical_core = tuple(ext["tt_metal_logical_core"])
+    worker_core = tuple(ext["worker_core"])
+    observed = report["observed_execution"]["value"]
+    assert tuple(observed["tt_metal_logical_core"]) == logical_core, report
+    assert tuple(observed["worker_core"]) == worker_core, report
+    logical_cores.append(logical_core)
+    worker_cores.append(worker_core)
 
-assert len(set(cores)) == 4, cores
-print("Verified real Tensix placement cores:", cores)
+assert len(set(logical_cores)) == 4, logical_cores
+assert len(set(worker_cores)) == 4, worker_cores
+print("Verified TT-Metal logical cores:", logical_cores)
+print("Verified observed worker cores:", worker_cores)
 PY
 
 /usr/bin/python3 run_analyzer.py \
@@ -136,7 +147,8 @@ assert summary["status"] == "ok", summary
 assert len(summary["successful_trial_ids"]) == 4, summary
 assert summary["best_trial_id"] is None, summary
 
-pairs = []
+logical_pairs = []
+worker_pairs = []
 for trial_id in summary["successful_trial_ids"]:
     report = json.loads((root / trial_id / "report.json").read_text())
     assert report["status"] == "ok", report
@@ -147,10 +159,18 @@ for trial_id in summary["successful_trial_ids"]:
     assert ext["measurement_source"] == "unavailable", ext
     assert ext["intermediate_transport"] == "noc_direct", ext
     assert ext["intermediate_returned_to_host"] is False, ext
-    producer, consumer = map(tuple, ext["physical_cores"])
-    assert producer != consumer, ext
-    pairs.append((producer, consumer))
+    logical_pair = tuple(map(tuple, ext["tt_metal_logical_cores"]))
+    worker_pair = tuple(map(tuple, ext["worker_cores"]))
+    assert logical_pair[0] != logical_pair[1], ext
+    assert worker_pair[0] != worker_pair[1], ext
+    observed = report["observed_execution"]["value"]
+    assert tuple(map(tuple, observed["tt_metal_logical_cores"])) == logical_pair
+    assert tuple(map(tuple, observed["worker_cores"])) == worker_pair
+    logical_pairs.append(logical_pair)
+    worker_pairs.append(worker_pair)
 
-assert len(set(pairs)) == 4, pairs
-print("Verified real two-core Tensix chain placements:", pairs)
+assert len(set(logical_pairs)) == 4, logical_pairs
+assert len(set(worker_pairs)) == 4, worker_pairs
+print("Verified TT-Metal logical chain placements:", logical_pairs)
+print("Verified observed worker chain placements:", worker_pairs)
 PY
