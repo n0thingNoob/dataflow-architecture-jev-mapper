@@ -69,7 +69,11 @@ def _execute(architecture, program, mapping, backend, directory, errors, objecti
         result = backend.run(architecture.model_copy(deep=True), program.model_copy(deep=True),
                              mapping.model_copy(deep=True), directory)
         report = Report.model_validate(result.model_dump() if isinstance(result, Report) else result)
-        if report.mapping_hash != report_fields["mapping_hash"] or report.backend != backend.name:
+        if (
+            report.mapping_hash != report_fields["mapping_hash"]
+            or report.backend != backend.name
+            or report.backend_version != report_fields["backend_version"]
+        ):
             raise ValueError("Backend report identity does not match this trial")
         if report.objective and objective_key is not None and report.objective_key() != objective_key:
             raise ValueError("Cannot compare different objective definitions in one run")
