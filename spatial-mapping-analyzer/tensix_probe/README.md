@@ -103,3 +103,30 @@ The TT-Sim CI path deliberately stays on `--tensix-runtime ttsim` semantics
 and therefore must keep `objective: null`. It cross-checks requested TT-Metal
 logical cores against worker coordinates returned by TT-Metal, but it is not a
 physical-device performance validation.
+
+
+## Repeated physical-device collection
+
+For dataset collection, use the dedicated collector instead of ranking single
+measurements:
+
+```bash
+python collect_measurements.py \
+  --tt-metal-home "$TT_METAL_HOME" \
+  --tt-metal-revision "$(git -C "$TT_METAL_HOME" rev-parse HEAD)" \
+  --tensix-chain-binary build/tensix_probe/spatial_tensix_chain_probe \
+  --candidate-limit 4 \
+  --repeats 5 \
+  --seed 0 \
+  --output results/device-collection
+```
+
+The collector randomizes repeated candidate execution with a deterministic seed,
+keeps every raw observation, exports `measured_mappings.jsonl`, and writes
+`measurement_summary.json` with median, MAD, min and max per effective
+execution. It deliberately does not select a best mapping from single samples.
+
+Each device trial uses an isolated `TT_METAL_PROFILER_DIR`. The duration
+returned through TT-Metal's profiler API must agree with every non-empty
+`DEVICE KERNEL DURATION [ns]` value in that trial's
+`cpp_device_perf_report.csv`; otherwise the measurement is rejected.
