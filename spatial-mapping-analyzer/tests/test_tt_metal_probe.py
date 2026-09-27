@@ -9,7 +9,10 @@ from unittest.mock import patch
 
 from candidate_generator import generate_candidates
 from specs import Architecture, Program, read_yaml
-from tt_metal_probe import TTMetalProbeBackend, logical_core_to_coord
+from tt_metal_probe import (
+    TTMetalProbeBackend,
+    logical_core_id_to_tt_metal_logical_core,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,17 +60,17 @@ class TTMetalProbeTests(unittest.TestCase):
         self.assertFalse(backend.search_capabilities.execution_policy)
         self.assertTrue(backend.search_capabilities.placement)
 
-        first = backend.execution_signature(self.arch, self.program, self.mapping)
+        first = backend.candidate_execution_signature(self.arch, self.program, self.mapping)
         moved = self.mapping.model_copy(deep=True)
         moved.regions[0].placement = [1]
-        second = backend.execution_signature(self.arch, self.program, moved)
+        second = backend.candidate_execution_signature(self.arch, self.program, moved)
         self.assertNotEqual(first, second)
 
     def test_logical_core_maps_row_major(self):
-        self.assertEqual(logical_core_to_coord(self.arch, 0), (0, 0))
-        self.assertEqual(logical_core_to_coord(self.arch, 3), (1, 1))
+        self.assertEqual(logical_core_id_to_tt_metal_logical_core(self.arch, 0), (0, 0))
+        self.assertEqual(logical_core_id_to_tt_metal_logical_core(self.arch, 3), (1, 1))
         with self.assertRaises(ValueError):
-            logical_core_to_coord(self.arch, 4)
+            logical_core_id_to_tt_metal_logical_core(self.arch, 4)
 
     def test_backend_invokes_requested_core_and_returns_correctness(self):
         self.mapping.regions[0].placement = [3]
@@ -75,7 +78,14 @@ class TTMetalProbeTests(unittest.TestCase):
         def fake_run(command, **kwargs):
             result_path = Path(command[command.index("--result") + 1])
             result_path.write_text(
-                json.dumps({"passed": True, "core": [1, 1], "elements": 1024})
+                json.dumps(
+                    {
+                        "passed": True,
+                        "tt_metal_logical_core": [1, 1],
+                        "worker_core": [7, 4],
+                        "elements": 1024,
+                    }
+                )
             )
             self.assertEqual(kwargs["env"]["TT_METAL_SLOW_DISPATCH_MODE"], "1")
             self.assertEqual(
@@ -91,8 +101,12 @@ class TTMetalProbeTests(unittest.TestCase):
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.correctness, "passed")
         self.assertIsNone(report.objective)
-        self.assertEqual(report.extensions["logical_core"], 3)
-        self.assertEqual(report.extensions["physical_core"], [1, 1])
+        self.assertEqual(report.extensions["mapping_logical_core_id"], 3)
+        self.assertEqual(report.extensions["tt_metal_logical_core"], [1, 1])
+        self.assertEqual(report.extensions["worker_core"], [7, 4])
+        self.assertEqual(
+            report.observed_execution.value["worker_core"], [7, 4]
+        )
         command = run.call_args.args[0]
         self.assertEqual(
             command[1:5], ["--core-x", "1", "--core-y", "1"]
@@ -117,7 +131,14 @@ class TTMetalProbeTests(unittest.TestCase):
         def fake_run(command, **kwargs):
             result_path = Path(command[command.index("--result") + 1])
             result_path.write_text(
-                json.dumps({"passed": True, "core": [9, 9], "elements": 1024})
+                json.dumps(
+                    {
+                        "passed": True,
+                        "tt_metal_logical_core": [9, 9],
+                        "worker_core": [7, 4],
+                        "elements": 1024,
+                    }
+                )
             )
             return subprocess.CompletedProcess(command, 0)
 
@@ -160,7 +181,8 @@ class TTMetalProbeTests(unittest.TestCase):
         ).run(self.arch, self.program, mapping, self.workdir)
         self.assertEqual(report.status, "ok", report.message)
         self.assertEqual(report.correctness, "passed")
-        self.assertEqual(report.extensions["physical_core"], [0, 0])
+        self.assertEqual(report.extensions["tt_metal_logical_core"], [0, 0])
+        self.assertIsNotNone(report.extensions["worker_core"])
 
 
 if __name__ == "__main__":
