@@ -1,4 +1,5 @@
 """TT-Metal backend for a two-core producer-consumer Tensix chain."""
+import hashlib
 from pathlib import Path
 
 from backend_contract import BackendCapabilities, ObservedExecutionIdentity
@@ -9,6 +10,16 @@ from tt_metal_probe import (
     logical_core_id_to_tt_metal_logical_core,
 )
 from validator import validate_inputs, validate_mapping
+
+
+def kernel_bundle_sha256(kernel_root):
+    digest = hashlib.sha256()
+    for path in sorted(kernel_root.glob("*.cpp")):
+        digest.update(path.name.encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def check_chain_supported(architecture, program, mapping):
@@ -100,6 +111,7 @@ class TTMetalChainBackend(TTMetalProbeBackend):
 
         result_path = workdir / "tensix_chain_result.json"
         kernel_root = Path(__file__).resolve().parent / "tensix_probe" / "kernels"
+        custom_kernel_bundle_sha256 = kernel_bundle_sha256(kernel_root)
         command = [
             str(self.probe_binary),
             "--producer-x",
@@ -127,6 +139,7 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                     list(coord) for coord in tt_metal_logical_cores
                 ],
                 "stages": [first.id, second.id],
+                "custom_kernel_bundle_sha256": custom_kernel_bundle_sha256,
             },
         )
         if failure:
@@ -201,6 +214,9 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                 analysis="DEVICE KERNEL DURATION [ns]",
                 implementation_revision=provenance["tt_metal_revision"],
                 executable_sha256=provenance["probe_binary_sha256"],
+                artifacts={
+                    "custom_kernel_bundle_sha256": custom_kernel_bundle_sha256,
+                },
                 configuration=provenance["profiler_configuration"],
             )
             metrics["latency"] = Metric(
