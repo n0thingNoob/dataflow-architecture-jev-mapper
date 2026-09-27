@@ -152,7 +152,8 @@ class TTMetalChainTests(unittest.TestCase):
             self.assertEqual(kwargs["env"]["SPATIAL_MEASURE_DEVICE"], "1")
             self.assertEqual(kwargs["env"]["TT_METAL_DEVICE_PROFILER"], "1")
             self.assertNotIn("TT_METAL_SIMULATOR", kwargs["env"])
-            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"])
+            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"]) / ".logs"
+            profiler_dir.mkdir()
             (profiler_dir / "cpp_device_perf_report.csv").write_text(
                 "DEVICE KERNEL DURATION [ns]\n1234\n"
             )
@@ -212,7 +213,8 @@ class TTMetalChainTests(unittest.TestCase):
         }
 
         def fake_run(command, **kwargs):
-            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"])
+            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"]) / ".logs"
+            profiler_dir.mkdir()
             (profiler_dir / "cpp_device_perf_report.csv").write_text(
                 "DEVICE KERNEL DURATION [ns]\n1200\n"
             )
