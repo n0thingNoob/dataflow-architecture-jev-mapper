@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@
 #include <tt-metalium/device.hpp>
 #include <tt-metalium/distributed.hpp>
 #include <tt-metalium/host_api.hpp>
+#include <tt-metalium/experimental/profiler.hpp>
 
 using namespace tt;
 using namespace tt::tt_metal;
@@ -79,7 +81,7 @@ std::filesystem::path tt_kernel(const char* relative) {
     return std::filesystem::path(home) / relative;
 }
 
-void write_result(const Args& args, bool passed) {
+void write_result(const Args& args, bool passed, std::optional<uint64_t> device_program_duration_ns) {
     std::ofstream output(args.result);
     if (!output) {
         throw std::runtime_error("Cannot open result path");
@@ -90,8 +92,34 @@ void write_result(const Args& args, bool passed) {
            << "  \"consumer_core\": [" << args.consumer.x << ", " << args.consumer.y << "],\n"
            << "  \"intermediate_transport\": \"noc_direct\",\n"
            << "  \"intermediate_returned_to_host\": false,\n"
-           << "  \"elements\": " << tt::constants::TILE_HW << "\n"
-           << "}\n";
+           << "  \"elements\": " << tt::constants::TILE_HW;
+    if (device_program_duration_ns.has_value()) {
+        output << ",\n"
+               << "  \"measurement_source\": \"tt_metal_device_profiler\",\n"
+               << "  \"device_program_duration_ns\": " << *device_program_duration_ns;
+    }
+    output << "\n}\n";
+}
+
+std::optional<uint64_t> read_device_program_duration_ns(distributed::MeshDevice& mesh_device) {
+    const char* enabled = std::getenv("SPATIAL_MEASURE_DEVICE");
+    if (enabled == nullptr || std::string(enabled) != "1") {
+        return std::nullopt;
+    }
+
+    ReadMeshDeviceProfilerResults(mesh_device);
+    const auto perf_data = experimental::GetLatestProgramsPerfData();
+    if (perf_data.size() != 1 || perf_data.begin()->second.size() != 1) {
+        throw std::runtime_error("Expected exactly one profiled program on one device");
+    }
+
+    const auto& program_data = *perf_data.begin()->second.begin();
+    constexpr const char* analysis_name = "DEVICE KERNEL DURATION [ns]";
+    const auto analysis = program_data.program_analyses_results.find(analysis_name);
+    if (analysis == program_data.program_analyses_results.end() || analysis->second.duration == 0) {
+        throw std::runtime_error("TT-Metal profiler did not produce a positive device kernel duration");
+    }
+    return analysis->second.duration;
 }
 
 }  // namespace
@@ -228,7 +256,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        write_result(args, passed);
+        const auto device_program_duration_ns = read_device_program_duration_ns(*mesh_device);
+        write_result(args, passed, device_program_duration_ns);
         mesh_device->close();
         return passed ? 0 : 2;
     } catch (const std::exception& error) {
