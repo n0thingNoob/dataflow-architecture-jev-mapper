@@ -69,6 +69,8 @@ def _record_from_trial(raw, fallback_run_id):
     trial_id = raw["trial_id"]
 
     record_data = {
+        "schema_version": "0.1",
+        "extensions": {},
         "observation_id": make_observation_id(run_id, trial_id),
         "run_id": run_id,
         "trial_id": trial_id,
