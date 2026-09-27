@@ -34,8 +34,11 @@ def _requested_execution_signature(
 ):
     if errors or mapping is None:
         return None, errors
+    signature = getattr(backend, "candidate_execution_signature", None)
+    if signature is None:
+        return None, errors
     try:
-        value = backend.candidate_execution_signature(
+        value = signature(
             architecture.model_copy(deep=True),
             program.model_copy(deep=True),
             mapping.model_copy(deep=True),
@@ -55,7 +58,7 @@ def _requested_execution_signature(
 def _execute(architecture, program, mapping, backend, directory, errors, objective_key):
     report_fields = {
         "backend": backend.name,
-        "backend_version": backend.backend_version,
+        "backend_version": getattr(backend, "backend_version", "unknown"),
         "mapping_hash": (
             fingerprint(mapping) if mapping is not None else "unavailable"
         ),
