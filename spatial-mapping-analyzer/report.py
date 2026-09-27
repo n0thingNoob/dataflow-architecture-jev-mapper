@@ -74,9 +74,18 @@ class Report(Versioned):
         return self
 
     def objective_key(self) -> tuple | None:
-        """Only objectives with the same identity and units may be compared."""
+        """Only objectives with the same execution/measurement definition may compare."""
         if self.objective is None:
             return None
         cost = self.objective
-        return self.backend, self.backend_version, cost.name, cost.unit, cost.source
+        key = (
+            self.backend,
+            self.backend_version,
+            cost.name,
+            cost.unit,
+            cost.source,
+        )
+        if cost.source == "measured":
+            return (*key, self.measurement_context.measurement_version)
+        return key
 
