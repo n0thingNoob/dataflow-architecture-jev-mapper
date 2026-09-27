@@ -47,6 +47,6 @@ class EnumeratingAnalyzer:
             program,
             limit=self.candidate_limit,
             capabilities=self.search_capabilities,
-            candidate_key=self.candidate_execution_signature,
+            candidate_execution_signature=self.candidate_execution_signature,
         )
         return candidates[len(feedback) % len(candidates)]
