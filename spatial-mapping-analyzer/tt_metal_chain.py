@@ -92,7 +92,7 @@ def check_chain_supported(architecture, program, mapping):
 class TTMetalChainBackend(TTMetalProbeBackend):
     name = "tt-metal-tensix-chain"
     backend_version = "bf16-add-chain-v2"
-    measurement_version = "tt-metal-device-kernel-duration-v1"
+    measurement_version = "tt-metal-device-kernel-duration-v2"
     compute_path = "Two-stage Tensix add chain via TT-Metal"
     probe_label = "Tensix chain probe"
     search_capabilities = BackendCapabilities(
