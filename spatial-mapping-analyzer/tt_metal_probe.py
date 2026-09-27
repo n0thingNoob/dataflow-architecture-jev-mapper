@@ -177,11 +177,11 @@ class TTMetalProbeBackend:
                 "TT_METAL_DEVICE_PROFILER": "1",
                 "TT_METAL_PROFILER_MID_RUN_DUMP": "1",
                 "TT_METAL_PROFILER_CPP_POST_PROCESS": "1",
-                "TT_METAL_PROFILER_DIR": str(profiler_dir),
             }
             env.update(
                 {
                     "SPATIAL_MEASURE_DEVICE": "1",
+                    "TT_METAL_PROFILER_DIR": str(profiler_dir),
                     **profiler_config,
                 }
             )
