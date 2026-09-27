@@ -5,8 +5,8 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from analyzer import EnumeratingAnalyzer, PassthroughAnalyzer
+from backend_contract import BackendCapabilities
 from candidate_generator import (
-    MappingSearchCapabilities,
     _placement_rotations,
     _topological_orders,
     generate_candidates,
@@ -50,7 +50,7 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(len(placed), len(set(placed)))
 
     def test_capabilities_limit_search_to_effective_dimensions(self):
-        capabilities = MappingSearchCapabilities(
+        capabilities = BackendCapabilities(
             topological_order=False,
             execution_policy=False,
             placement=True,
@@ -99,6 +99,28 @@ class CandidateTests(unittest.TestCase):
             {mapping.execution_policy for mapping in candidates},
             {"exclusive_cores_tensor_barrier"},
         )
+
+    def test_topological_order_does_not_change_op_to_core_assignment(self):
+        capabilities = BackendCapabilities(
+            topological_order=True,
+            execution_policy=False,
+            placement=True,
+        )
+        candidates = generate_candidates(
+            self.arch, self.program, limit=8, capabilities=capabilities
+        )
+        by_order = {}
+        for mapping in candidates:
+            order = tuple(region.ops[0] for region in mapping.regions)
+            placement = {
+                region.ops[0]: region.placement[0]
+                for region in mapping.regions
+            }
+            by_order.setdefault(order, placement)
+
+        self.assertGreaterEqual(len(by_order), 2)
+        placements = list(by_order.values())
+        self.assertEqual(placements[0], placements[1])
 
     def test_candidate_generation_rejects_invalid_limits_and_insufficient_cores(self):
         with self.assertRaisesRegex(ValueError, "positive"):
