@@ -1,10 +1,13 @@
 """Tests for topology-aware heuristic scoring and evaluation."""
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
 from dataset_split import build_split_manifest
 from evaluate_scorer import evaluate
+from evaluate_ttsim_profile import evaluate_profile_run
 from mapping_ir import Mapping, Region
 from scorer import HeuristicScorer
 from specs import Architecture, Program, fingerprint, read_yaml
@@ -281,6 +284,75 @@ class HeuristicBaselineTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "multiple Mapping IR"):
             evaluate(records, HeuristicScorer())
+
+    def test_ttsim_profile_evaluation_aggregates_repeats(self):
+        adjacent_a = explicit_mapping(self.arch, self.program, [0, 1])
+        adjacent_b = explicit_mapping(self.arch, self.program, [0, 2])
+        diagonal = explicit_mapping(self.arch, self.program, [0, 3])
+        mappings = [
+            (adjacent_a, [100, 102]),
+            (adjacent_b, [120, 122]),
+            (diagonal, [90, 92]),
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            run_dir = Path(temp)
+            trials = []
+            index = 0
+            for mapping, values in mappings:
+                for value in values:
+                    trials.append({
+                        "architecture": self.arch.model_dump(mode="json"),
+                        "program": self.program.model_dump(mode="json"),
+                        "mapping": mapping.model_dump(mode="json"),
+                        "requested_execution_signature": ["test", fingerprint(mapping)],
+                        "report": {
+                            "status": "ok",
+                            "mapping_hash": fingerprint(mapping),
+                            "objective": {
+                                "name": "ttsim_profile_kernel_duration",
+                                "value": float(value),
+                                "unit": "ns",
+                                "source": "estimated",
+                            },
+                        },
+                        "trial_id": f"trial_{index:04d}",
+                    })
+                    index += 1
+            (run_dir / "history.jsonl").write_text(
+                "".join(json.dumps(trial) + "\n" for trial in reversed(trials))
+            )
+            result = evaluate_profile_run(run_dir)
+
+        self.assertEqual(result["source_kind"], "simulator_estimate")
+        self.assertEqual(result["candidate_count"], 3)
+        self.assertEqual(result["repeat_counts"], [2])
+        self.assertEqual(result["top_score_tie_count"], 2)
+        self.assertEqual(result["oracle_profile_ns"], 91.0)
+        self.assertEqual(result["top_tie_best_profile_ns"], 101.0)
+        self.assertEqual(result["top_tie_worst_profile_ns"], 121.0)
+
+    def test_ttsim_profile_evaluation_rejects_non_estimated_objective(self):
+        mapping = explicit_mapping(self.arch, self.program, [0, 1])
+        with tempfile.TemporaryDirectory() as temp:
+            run_dir = Path(temp)
+            trial = {
+                "architecture": self.arch.model_dump(mode="json"),
+                "program": self.program.model_dump(mode="json"),
+                "mapping": mapping.model_dump(mode="json"),
+                "report": {
+                    "status": "ok",
+                    "mapping_hash": fingerprint(mapping),
+                    "objective": {
+                        "name": "device_kernel_duration",
+                        "value": 100.0,
+                        "unit": "ns",
+                        "source": "measured",
+                    },
+                },
+            }
+            (run_dir / "history.jsonl").write_text(json.dumps(trial) + "\n")
+            with self.assertRaisesRegex(ValueError, "not a TT-Sim profiler estimate"):
+                evaluate_profile_run(run_dir)
 
     def test_evaluation_reports_tie_regret_range_and_is_order_independent(self):
         adjacent_a = explicit_mapping(self.arch, self.program, [0, 1])
