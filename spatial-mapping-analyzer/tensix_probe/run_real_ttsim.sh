@@ -8,13 +8,14 @@ TTSIM_LIBRARY="${TTSIM_LIBRARY:-$REPO_ROOT/.ci/ttsim/libttsim.so}"
 BUILD_DIR="$ROOT/build/tensix_probe"
 RESULTS_DIR="$ROOT/results/ci-tensix"
 CHAIN_RESULTS="$ROOT/results/ci-tensix-chain"
+PROFILE_RESULTS="$ROOT/results/ci-tensix-profile"
 
 # The adapter captures subprocess output in each trial directory. Surface it in
 # the job log on failure as well, including failures before summary validation.
 print_failure_logs() {
     local status=$?
     if (( status != 0 )); then
-        for result_dir in "$RESULTS_DIR" "$CHAIN_RESULTS"; do
+        for result_dir in "$RESULTS_DIR" "$CHAIN_RESULTS" "$PROFILE_RESULTS"; do
             for log in "$result_dir"/trial_*/*stderr.log "$result_dir"/trial_*/report.json; do
                 if [[ -f "$log" ]]; then
                     echo "Failure diagnostics: $log" >&2
@@ -39,7 +40,7 @@ fi
 CMAKE_EXTRA_ARGS=()
 if [[ -n "${TT_METAL_SOURCE_DIR:-}" ]]; then
     CMAKE_EXTRA_ARGS+=("-DTT_METAL_SOURCE_DIR=$TT_METAL_SOURCE_DIR")
-    CMAKE_EXTRA_ARGS+=("-DSPATIAL_TENSIX_ENABLE_DEVICE_PROFILING=OFF")
+    CMAKE_EXTRA_ARGS+=("-DSPATIAL_TENSIX_ENABLE_DEVICE_PROFILING=ON")
     CMAKE_EXTRA_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$TT_METAL_SOURCE_DIR/cmake/x86_64-linux-clang-20-libstdcpp-toolchain.cmake")
     CONFIG="source-tree"
 else
@@ -61,7 +62,7 @@ echo "TT-Sim library=$TTSIM_LIBRARY"
 
 /usr/bin/python3 -m pip install -r "$ROOT/requirements.txt"
 
-rm -rf "$BUILD_DIR" "$RESULTS_DIR" "$CHAIN_RESULTS"
+rm -rf "$BUILD_DIR" "$RESULTS_DIR" "$CHAIN_RESULTS" "$PROFILE_RESULTS"
 if [[ -n "${TT_METAL_SOURCE_DIR:-}" ]]; then
     mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/toolchain/wormhole"
     mkdir -p "$TT_METAL_SOURCE_DIR/runtime/hw/toolchain/blackhole"
@@ -173,4 +174,65 @@ assert len(set(logical_pairs)) == 4, logical_pairs
 assert len(set(worker_pairs)) == 4, worker_pairs
 print("Verified TT-Metal logical chain placements:", logical_pairs)
 print("Verified observed worker chain placements:", worker_pairs)
+PY
+
+
+/usr/bin/python3 run_analyzer.py \
+    --backend tensix-chain \
+    --tensix-runtime ttsim-profile \
+    --arch examples/wormhole_tensix_probe.yaml \
+    --program examples/bf16_two_add_chain.yaml \
+    --search --candidate-limit 12 --iterations 36 \
+    --tt-metal-home "$TT_METAL_HOME" \
+    --tt-metal-revision 038c8bbd192aa56a8ffaf6f7010f46d0b99eeca0 \
+    --tensix-chain-binary "$CHAIN_PROBE" \
+    --tt-sim-library "$TTSIM_LIBRARY" \
+    --tt-sim-timeout 180 \
+    --output "$PROFILE_RESULTS"
+
+/usr/bin/python3 evaluate_ttsim_profile.py \
+    --run "$PROFILE_RESULTS" \
+    --output "$PROFILE_RESULTS/heuristic_vs_ttsim_profile.json"
+
+/usr/bin/python3 - <<'PY'
+import json
+from pathlib import Path
+
+root = Path("results/ci-tensix-profile")
+summary = json.loads((root / "summary.json").read_text())
+report = json.loads(
+    (root / "heuristic_vs_ttsim_profile.json").read_text()
+)
+
+assert summary["status"] == "ok", summary
+assert len(summary["successful_trial_ids"]) == 36, summary
+assert report["source_kind"] == "simulator_estimate", report
+assert report["candidate_count"] == 12, report
+assert report["repeat_counts"] == [3], report
+assert report["top_score_tie_count"] >= 1, report
+assert report["oracle_profile_ns"] > 0, report
+assert report["selected_profile_ns"] > 0, report
+
+for trial_id in summary["successful_trial_ids"]:
+    trial_report = json.loads(
+        (root / trial_id / "report.json").read_text()
+    )
+    objective = trial_report["objective"]
+    assert objective["name"] == "ttsim_profile_kernel_duration", objective
+    assert objective["source"] == "estimated", objective
+    assert objective["unit"] == "ns", objective
+    assert trial_report["measurement_context"] is None, trial_report
+
+print("TT-Sim heuristic experiment:")
+print(json.dumps({
+    "candidate_count": report["candidate_count"],
+    "repeat_counts": report["repeat_counts"],
+    "top_score_tie_count": report["top_score_tie_count"],
+    "selected_profile_ns": report["selected_profile_ns"],
+    "oracle_profile_ns": report["oracle_profile_ns"],
+    "selected_relative_regret": report["selected_relative_regret"],
+    "top_tie_regret_min": report["top_tie_regret_min"],
+    "top_tie_regret_max": report["top_tie_regret_max"],
+    "score_groups": report["score_groups"],
+}, indent=2))
 PY

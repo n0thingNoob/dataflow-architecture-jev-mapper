@@ -39,9 +39,12 @@ def main():
     )
     parser.add_argument(
         "--tensix-runtime",
-        choices=["ttsim", "device"],
+        choices=["ttsim", "ttsim-profile", "device"],
         default="ttsim",
-        help="Run Tensix probes on TT-Sim or a real device; measured objectives require device",
+        help=(
+            "Run Tensix probes on TT-Sim, profiled TT-Sim, or a real device; "
+            "TT-Sim profiler objectives are estimated, device objectives measured"
+        ),
     )
     parser.add_argument("--output", type=Path, help="A new directory; existing results are never overwritten")
     args = parser.parse_args()

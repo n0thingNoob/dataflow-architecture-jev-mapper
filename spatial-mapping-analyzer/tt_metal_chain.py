@@ -3,12 +3,11 @@ import hashlib
 from pathlib import Path
 
 from backend_contract import ObservedExecutionIdentity
-from report import MeasurementContext, Metric, Objective, Report, unsupported_metrics
+from report import Metric, Report, unsupported_metrics
 from specs import fingerprint
 from tt_metal_probe import (
     TTMetalProbeBackend,
     logical_core_id_to_tt_metal_logical_core,
-    profiler_csv_durations,
 )
 from validator import validate_inputs, validate_mapping
 
@@ -182,60 +181,20 @@ class TTMetalChainBackend(TTMetalProbeBackend):
         objective = None
         measurement_context = None
         metrics = unsupported_metrics("This runtime does not expose this metric")
-        if self.runtime == "device":
-            duration = result.get("device_kernel_duration_ns")
-            if (
-                result.get("measurement_source")
-                != "tt_metal_device_profiler"
-                or isinstance(duration, bool)
-                or not isinstance(duration, (int, float))
-                or duration <= 0
-            ):
-                return self._failure(
-                    mapping,
-                    "PROBE_RESULT_MISMATCH",
-                    "Device result is missing a valid TT-Metal profiler duration",
-                )
-
-            profiler_report = Path(provenance["profiler_report"])
-            try:
-                csv_durations = profiler_csv_durations(profiler_report)
-            except (OSError, ValueError) as exc:
-                return self._failure(
-                    mapping,
-                    "PROFILER_CROSS_CHECK_FAILED",
-                    str(exc),
-                )
-            if set(csv_durations) != {int(duration)}:
-                return self._failure(
-                    mapping,
-                    "PROFILER_CROSS_CHECK_FAILED",
-                    "Profiler API duration does not match cpp_device_perf_report.csv",
-                )
-            objective = Objective(
-                name="device_kernel_duration",
-                value=float(duration),
-                unit="ns",
-                source="measured",
-            )
-            measurement_context = MeasurementContext(
-                measurement_version=self.measurement_version,
-                runtime="device",
-                source="tt_metal_device_profiler",
-                analysis="DEVICE KERNEL DURATION [ns]",
-                implementation_revision=provenance["tt_metal_revision"],
-                executable_sha256=provenance["probe_binary_sha256"],
+        if self.runtime in {"ttsim-profile", "device"}:
+            objective, measurement_context, failure = self._profile_result(
+                mapping,
+                result,
+                provenance,
                 artifacts={
                     "custom_kernel_bundle_sha256": custom_kernel_bundle_sha256,
                 },
-                configuration={
-                    **provenance["profiler_configuration"],
-                    "cross_check": "cpp_device_perf_report.csv",
-                },
             )
+            if failure:
+                return failure
             metrics["latency"] = Metric(
-                value=float(duration),
-                unit="ns",
+                value=objective.value,
+                unit=objective.unit,
                 status="available",
             )
 
@@ -260,7 +219,7 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                 "compute_path": "Two Tensix UNPACK/MATH/PACK stages via TT-Metal",
                 "runtime": self.runtime,
                 "measurement_source": (
-                    "tt_metal_device_profiler"
+                    provenance.get("measurement_source", "unavailable")
                     if objective is not None
                     else "unavailable"
                 ),

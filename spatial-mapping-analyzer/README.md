@@ -103,8 +103,66 @@ exporter 只接受 `status=ok`、`correctness=passed`、`objective.source=measur
 
 物理设备采样使用 `collect_measurements.py`，支持 `--backend single-add` 和 `--backend two-add-chain`：每个 effective candidate 重复执行并按固定 seed 随机打散顺序，raw trial 全部保留，同时输出 median/MAD/min/max 聚合。collection 模式不会按单次测量生成 `best_mapping.yaml`。TT-Metal device measurement 还会把 profiler API 的 duration 与独立生成的 `cpp_device_perf_report.csv` 交叉核对；不一致的 observation 会被拒绝。
 
-当前 measured workload 已覆盖单核 placement 与两级 direct-NoC chain placement；下一阶段直接建立固定 split、heuristic baseline 和 learned candidate scorer。
+当前 measured workload 已覆盖单核 placement 与两级 direct-NoC chain placement；下一阶段先固定 split 并建立 heuristic baseline，再决定 learned scorer。
 
+
+## Heuristic baseline
+
+先不接 learned model。当前 baseline 只对 backend 已经证明可执行的候选 mapping 做确定性打分：
+
+```text
+Program + Architecture
+        ↓
+candidate_generator
+        ↓
+HeuristicScorer
+        ↓
+measured-latency evaluation
+```
+
+当前 `HeuristicScorer` 是 topology-aware deterministic cost model。正式 ranking 只使用三个 placement-sensitive 项：tensor-size weighted critical-path hops、multicast-aware network byte-hops、以及 deterministic XY-route peak directed-link load。per-core endpoint traffic 仅保留为 diagnostic，不参与 ranking，因为在当前 injective one-op-per-core 搜索空间里它经常是 placement-invariant。若 architecture 同时提供 `bandwidth_bytes_per_cycle` 与 `link_latency_cycles`，还会产生一个 cycle-like critical-path diagnostic；该值同样不参与 ranking。当前 topology model 只接受显式 logical mesh / `wormhole-noc` profile，并把 `wormhole-noc` 当作逻辑 mesh proxy，不对其他 network topology 静默套用 XY routing。对真正对称、结构等价的 placement，heuristic 会保持并列，而不是加入任意 core-ID 偏置。
+
+生成固定、无 program/execution leakage 的 split manifest：
+
+```bash
+python dataset_split.py \
+  --dataset results/dataset/measured-mappings.jsonl \
+  --output results/dataset/split.json
+```
+
+在 held-out split 上对 heuristic 与真实 measured latency 做比较：
+
+```bash
+python evaluate_scorer.py \
+  --dataset results/dataset/measured-mappings.jsonl \
+  --split-manifest results/dataset/split.json \
+  --split test
+```
+
+evaluation 会在相同 architecture、objective 和完整 measurement context 内比较候选；repeated observations 先按 `execution_group_id` 取 median。对于 heuristic 同分候选，不再只报告候选枚举顺序选中的一个值，而是同时记录 deterministic selection、top-score tie 数量、tie 集合中的 best/worst measured latency，以及对应 regret range。split 使用 deterministic balanced program-group assignment：数据量允许时 train/validation/test 都非空，同时继续禁止同一 `execution_group_id` 跨 split。learned scorer 放到后续独立 PR。
+
+## TT-Sim profiler experiment
+
+在不使用真实 Wormhole 的情况下，可以用 pinned TT-Metal + TT-Sim + TT-Metal device-profiler instrumentation 做 heuristic sanity experiment。该路径使用 `--tensix-runtime ttsim-profile`，profile objective 会明确标记为：
+
+```text
+name   = ttsim_profile_kernel_duration
+source = estimated
+unit   = ns
+```
+
+这些数值只用于 simulator-side ranking/regret 实验，**不会**被 `export_dataset.py` 接受为真实训练标签，也不能解释成 physical Wormhole latency。
+
+CI 中会对两级 Tensix chain 的全部 12 个 ordered producer→consumer placements 各运行 3 次，共 36 次 profiler execution，并生成：
+
+```text
+results/ci-tensix-profile/
+  summary.json
+  heuristic_vs_ttsim_profile.json
+  trial_*/
+```
+
+`evaluate_ttsim_profile.py` 会按 mapping 聚合 profiler median/MAD，再报告 heuristic 的 deterministic selection、oracle、top-score tie 数量及 tie regret range。
 
 ## 可选 Tensix placement probe
 
