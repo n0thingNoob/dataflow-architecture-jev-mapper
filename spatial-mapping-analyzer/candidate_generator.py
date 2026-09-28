@@ -1,5 +1,5 @@
-"""Deterministic, bounded mapping candidates supported by the current TT-Sim path."""
-
+"""Deterministic, bounded mapping candidates supported by a backend."""
+from backend_contract import BackendCapabilities
 from mapping_ir import Mapping, Region
 from specs import fingerprint
 
@@ -24,7 +24,8 @@ def _topological_orders(program, limit):
             orders.append(tuple(prefix))
             return
         ready = sorted(
-            op_id for op_id in remaining
+            op_id
+            for op_id in remaining
             if all(parent not in remaining for parent in predecessors[op_id])
         )
         for op_id in ready:
@@ -42,28 +43,42 @@ def _placement_rotations(available_cores, op_count):
         yield tuple((offset + index) % available_cores for index in range(op_count))
 
 
-def generate_candidates(architecture, program, limit=16):
-    """Generate distinct mappings that the current BRISC backend can actually execute.
-
-    The current backend supports one op per region and one core per op. Candidate
-    diversity therefore comes from legal topological order, execution policy and
-    explicit logical-core placement. Fusion and multi-core regions stay out of this
-    layer until the backend can execute them faithfully.
-    """
+def generate_candidates(
+    architecture,
+    program,
+    limit=16,
+    capabilities=None,
+    candidate_execution_signature=None,
+):
+    """Generate distinct mappings in dimensions the selected backend can execute."""
     if limit < 1:
         raise ValueError("Candidate limit must be positive")
     if len(program.ops) > architecture.available_cores:
         raise ValueError("Current candidate generator requires one available core per op")
 
-    orders = _topological_orders(program, limit)
+    capabilities = capabilities or BackendCapabilities()
+    orders = (
+        _topological_orders(program, limit)
+        if capabilities.topological_order
+        else [tuple(op.id for op in program.ordered_ops())]
+    )
     if not orders:
         raise ValueError("Program has no legal topological order")
 
+    placements = (
+        _placement_rotations(architecture.available_cores, len(program.ops))
+        if capabilities.placement
+        else [tuple(range(len(program.ops)))]
+    )
+    policies = POLICIES if capabilities.execution_policy else POLICIES[:1]
+
     candidates = []
     seen = set()
-    for placement in _placement_rotations(architecture.available_cores, len(program.ops)):
+    canonical_ops = tuple(op.id for op in program.ordered_ops())
+    for placement in placements:
+        placement_by_op = dict(zip(canonical_ops, placement))
         for order in orders:
-            for policy in POLICIES:
+            for policy in policies:
                 mapping = Mapping(
                     program_id=program.id,
                     program_hash=fingerprint(program),
@@ -74,13 +89,23 @@ def generate_candidates(architecture, program, limit=16):
                             id=f"region_{op_id}",
                             ops=[op_id],
                             cores=1,
-                            placement=[core_id],
+                            placement=[placement_by_op[op_id]],
                         )
-                        for op_id, core_id in zip(order, placement)
+                        for op_id in order
                     ],
                 )
-                key = fingerprint(mapping)
-                if key in seen:
+                key = (
+                    candidate_execution_signature(architecture, program, mapping)
+                    if candidate_execution_signature is not None
+                    else fingerprint(mapping)
+                )
+                try:
+                    duplicate = key in seen
+                except TypeError as exc:
+                    raise ValueError(
+                        "Candidate execution signature must be hashable"
+                    ) from exc
+                if duplicate:
                     continue
                 seen.add(key)
                 candidates.append(mapping)

@@ -5,7 +5,12 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from analyzer import EnumeratingAnalyzer, PassthroughAnalyzer
-from candidate_generator import _placement_rotations, _topological_orders, generate_candidates
+from backend_contract import BackendCapabilities
+from candidate_generator import (
+    _placement_rotations,
+    _topological_orders,
+    generate_candidates,
+)
 from mapping_ir import Mapping
 from specs import Architecture, Program, fingerprint, read_yaml
 from validator import validate_mapping
@@ -43,6 +48,79 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual(validate_mapping(self.arch, self.program, mapping), [])
             placed = [core for region in mapping.regions for core in region.placement]
             self.assertEqual(len(placed), len(set(placed)))
+
+    def test_capabilities_limit_search_to_effective_dimensions(self):
+        capabilities = BackendCapabilities(
+            topological_order=False,
+            execution_policy=False,
+            placement=True,
+        )
+        candidates = generate_candidates(
+            self.arch, self.program, limit=4, capabilities=capabilities
+        )
+        stable_order = [op.id for op in self.program.ordered_ops()]
+        self.assertEqual(len(candidates), 4)
+        self.assertTrue(
+            all(
+                [region.ops[0] for region in mapping.regions] == stable_order
+                for mapping in candidates
+            )
+        )
+        self.assertEqual(
+            {mapping.execution_policy for mapping in candidates},
+            {"exclusive_cores_tensor_barrier"},
+        )
+        placements = {
+            tuple(region.placement[0] for region in mapping.regions)
+            for mapping in candidates
+        }
+        self.assertEqual(len(placements), 4)
+
+    def test_execution_signature_deduplicates_equivalent_ir_mappings(self):
+        def signature(architecture, program, mapping):
+            return tuple(
+                (region.ops[0], region.placement[0])
+                for region in mapping.regions
+            )
+
+        candidates = generate_candidates(
+            self.arch,
+            self.program,
+            limit=6,
+            candidate_execution_signature=signature,
+        )
+        signatures = [
+            signature(self.arch, self.program, mapping)
+            for mapping in candidates
+        ]
+        self.assertEqual(len(candidates), 6)
+        self.assertEqual(len(set(signatures)), 6)
+        self.assertEqual(
+            {mapping.execution_policy for mapping in candidates},
+            {"exclusive_cores_tensor_barrier"},
+        )
+
+    def test_topological_order_does_not_change_op_to_core_assignment(self):
+        capabilities = BackendCapabilities(
+            topological_order=True,
+            execution_policy=False,
+            placement=True,
+        )
+        candidates = generate_candidates(
+            self.arch, self.program, limit=8, capabilities=capabilities
+        )
+        by_order = {}
+        for mapping in candidates:
+            order = tuple(region.ops[0] for region in mapping.regions)
+            placement = {
+                region.ops[0]: region.placement[0]
+                for region in mapping.regions
+            }
+            by_order.setdefault(order, placement)
+
+        self.assertGreaterEqual(len(by_order), 2)
+        placements = list(by_order.values())
+        self.assertEqual(placements[0], placements[1])
 
     def test_candidate_generation_rejects_invalid_limits_and_insufficient_cores(self):
         with self.assertRaisesRegex(ValueError, "positive"):

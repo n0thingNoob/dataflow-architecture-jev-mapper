@@ -2,9 +2,11 @@
 import json
 from copy import deepcopy
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import ValidationError
 
+from backend_contract import json_safe_signature
 from mapping_ir import Mapping
 from report import Report
 from specs import Architecture, Program, fingerprint, write_json, write_yaml
@@ -27,16 +29,51 @@ def _propose(architecture, program, analyzer, history):
         return None, None, [error("ANALYZER_ERROR", "analyzer", str(exc))]
 
 
+def _requested_execution_signature(
+    architecture, program, mapping, backend, errors
+):
+    if errors or mapping is None:
+        return None, errors
+    signature = getattr(backend, "candidate_execution_signature", None)
+    if signature is None:
+        return None, errors
+    try:
+        value = signature(
+            architecture.model_copy(deep=True),
+            program.model_copy(deep=True),
+            mapping.model_copy(deep=True),
+        )
+        return json_safe_signature(value), errors
+    except Exception as exc:
+        return None, [
+            *errors,
+            error(
+                "EXECUTION_SIGNATURE_ERROR",
+                "backend.candidate_execution_signature",
+                str(exc),
+            ),
+        ]
+
+
 def _execute(architecture, program, mapping, backend, directory, errors, objective_key):
-    report_fields = {"backend": backend.name, "backend_version": "unknown",
-                     "mapping_hash": fingerprint(mapping) if mapping is not None else "unavailable"}
+    report_fields = {
+        "backend": backend.name,
+        "backend_version": getattr(backend, "backend_version", "unknown"),
+        "mapping_hash": (
+            fingerprint(mapping) if mapping is not None else "unavailable"
+        ),
+    }
     if errors:
         return Report(**report_fields, status="skipped", message="Mapping validation failed; backend was not invoked")
     try:
         result = backend.run(architecture.model_copy(deep=True), program.model_copy(deep=True),
                              mapping.model_copy(deep=True), directory)
         report = Report.model_validate(result.model_dump() if isinstance(result, Report) else result)
-        if report.mapping_hash != report_fields["mapping_hash"] or report.backend != backend.name:
+        if (
+            report.mapping_hash != report_fields["mapping_hash"]
+            or report.backend != backend.name
+            or report.backend_version != report_fields["backend_version"]
+        ):
             raise ValueError("Backend report identity does not match this trial")
         if report.objective and objective_key is not None and report.objective_key() != objective_key:
             raise ValueError("Cannot compare different objective definitions in one run")
@@ -45,8 +82,15 @@ def _execute(architecture, program, mapping, backend, directory, errors, objecti
         return Report(**report_fields, status="error", message=str(exc))
 
 
-def run(architecture: Architecture, program: Program, analyzer, backend,
-        iterations: int, output: Path) -> dict:
+def run(
+    architecture: Architecture,
+    program: Program,
+    analyzer,
+    backend,
+    iterations: int,
+    output: Path,
+    rank_objectives: bool = True,
+) -> dict:
     errors = validate_inputs(architecture, program)
     if iterations < 1:
         errors.append(error("ITERATIONS", "iterations", "Must be positive"))
@@ -54,6 +98,7 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         raise InvalidInput(errors)
 
     output.mkdir(parents=True, exist_ok=False)
+    run_id = f"run_{uuid4().hex}"
     history, best, objective_key = [], None, None
     successful_trials = []
 
@@ -65,22 +110,35 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
         write_yaml(directory / "arch.yaml", inputs["architecture"])
         write_yaml(directory / "program.yaml", inputs["program"])
 
-        raw, mapping, errors = _propose(architecture, program, analyzer, history)
+        raw, mapping, errors = _propose(
+            architecture, program, analyzer, history
+        )
         if raw is not None:
             write_yaml(directory / "mapping.yaml", raw)
+        requested_execution_signature, errors = _requested_execution_signature(
+            architecture, program, mapping, backend, errors
+        )
         validation = {"valid": not errors, "errors": errors}
         write_json(directory / "validation.json", validation)
 
-        report = _execute(architecture, program, mapping, backend, directory, errors, objective_key)
+        report = _execute(
+            architecture,
+            program,
+            mapping,
+            backend,
+            directory,
+            errors,
+            objective_key,
+        )
         objective = report.objective
         trial = {
+            "run_id": run_id,
             "trial_id": trial_id,
             **inputs,
             "mapping": raw,
+            "requested_execution_signature": requested_execution_signature,
             "validation": validation,
             "report": report.model_dump(),
-            "objective": objective.model_dump() if objective else None,
-            "measured_cost": objective.value if objective and objective.source == "measured" else None,
             "feedback_trial_ids": [t["trial_id"] for t in history],
         }
 
@@ -88,7 +146,10 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
             successful_trials.append(trial_id)
         if objective:
             objective_key = report.objective_key()
-            if best is None or objective.value < best["objective"]["value"]:
+            if rank_objectives and (
+                best is None
+                or objective.value < best["report"]["objective"]["value"]
+            ):
                 best = trial
 
         write_json(directory / "report.json", trial["report"])
@@ -99,17 +160,18 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
 
     summary = {
         "schema_version": "0.1",
+        "run_id": run_id,
         "backend": backend.name,
         "status": "ok" if successful_trials else "no_successful_result",
         "successful_trial_ids": successful_trials,
         "best_trial_id": best["trial_id"] if best else None,
-        "best_objective": best["objective"] if best else None,
+        "best_objective": best["report"]["objective"] if best else None,
         "trials": [
             {
                 "trial_id": t["trial_id"],
                 "valid": t["validation"]["valid"],
                 "status": t["report"]["status"],
-                "objective": t["objective"],
+                "objective": t["report"]["objective"],
             }
             for t in history
         ],
