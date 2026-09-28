@@ -69,6 +69,7 @@ class E2ETests(unittest.TestCase):
 
         class Scores:
             name = "test"
+            backend_version = "test"
             values = iter([None, 3, 1, 1])
 
             def run(inner, arch, program, mapping, directory):
@@ -90,7 +91,19 @@ class E2ETests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(ROOT / "export_schemas.py"), "--output", str(destination)],
                                 capture_output=True, text=True, timeout=30, cwd=self.workdir)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual({p.stem for p in destination.iterdir()}, {n + ".schema" for n in ["arch", "program", "mapping", "report"]})
+        self.assertEqual(
+            {p.stem for p in destination.iterdir()},
+            {
+                name + ".schema"
+                for name in [
+                    "arch",
+                    "program",
+                    "mapping",
+                    "report",
+                    "dataset_record",
+                ]
+            },
+        )
         result = self.cli("--iterations", "0")
         self.assertEqual(json.loads(result.stderr)["errors"][0]["code"], "ITERATIONS")
         result = self.cli("--tt-sim-library", str(self.workdir / "missing.so"))
@@ -203,7 +216,6 @@ class E2ETests(unittest.TestCase):
             self.assertTrue(report["extensions"]["program_dag_executed"])
             self.assertEqual(len(report["extensions"]["execution"]["outputs"]["y"]), 1024)
             self.assertIsNone(report["objective"])
-            self.assertIsNone(trial["measured_cost"])
             self.assertIsNone(report["metrics"]["total_cycles"]["value"])
             directory = self.output / trial["trial_id"]
             for name in ["inputs.json", "reference.json", "correctness.json", "program_execution.json", "op_0000.bin", "invocation.json"]:

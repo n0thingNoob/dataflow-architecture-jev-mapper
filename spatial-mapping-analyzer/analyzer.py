@@ -28,14 +28,25 @@ class EnumeratingAnalyzer:
     mappings and collect simulator feedback before a learned policy is introduced.
     """
 
-    def __init__(self, candidate_limit=16):
+    def __init__(
+        self,
+        candidate_limit=16,
+        search_capabilities=None,
+        candidate_execution_signature=None,
+    ):
         if candidate_limit < 1:
             raise ValueError("Candidate limit must be positive")
         self.candidate_limit = candidate_limit
+        self.search_capabilities = search_capabilities
+        self.candidate_execution_signature = candidate_execution_signature
 
     def propose_mapping(self, architecture, program, feedback=None):
         feedback = feedback or []
         candidates = generate_candidates(
-            architecture, program, limit=self.candidate_limit
+            architecture,
+            program,
+            limit=self.candidate_limit,
+            capabilities=self.search_capabilities,
+            candidate_execution_signature=self.candidate_execution_signature,
         )
         return candidates[len(feedback) % len(candidates)]

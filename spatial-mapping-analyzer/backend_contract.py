@@ -1,0 +1,37 @@
+"""Shared contracts between mapping search, execution backends, and reports."""
+import json
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic import field_validator
+
+from specs import Contract, Identifier
+
+
+@dataclass(frozen=True)
+class BackendCapabilities:
+    """Mapping dimensions that can change execution for a backend."""
+
+    topological_order: bool = True
+    execution_policy: bool = True
+    placement: bool = True
+
+
+class ObservedExecutionIdentity(Contract):
+    """Backend-observed execution identity after lowering/runtime mapping."""
+
+    kind: Identifier
+    value: Any
+
+    @field_validator("value")
+    @classmethod
+    def json_safe_value(cls, value):
+        if value is None:
+            raise ValueError("Observed execution identity is required")
+        json.dumps(value, sort_keys=True, allow_nan=False)
+        return value
+
+
+def json_safe_signature(value):
+    """Return a canonical JSON-compatible representation of a signature."""
+    return json.loads(json.dumps(value, sort_keys=True, allow_nan=False))

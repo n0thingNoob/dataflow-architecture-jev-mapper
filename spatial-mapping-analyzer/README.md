@@ -31,12 +31,12 @@ python run_analyzer.py \
   --search --candidate-limit 12 --iterations 12
 ```
 
-当前 candidate generator 只使用 backend 已经能忠实执行的自由度：
-- 合法 topological order
-- serial / dependency-parallel execution policy
-- 显式 logical-core placement
+candidate search 由 backend 显式声明哪些 Mapping IR 自由度会改变真实执行，并用 backend execution signature 去掉 lowering 后等价的候选。当前：
+- BRISC 搜索合法 topological order、execution policy 和 logical-core placement。
+- Tensix placement probe 只搜索 placement。
+- 两核 Tensix chain 搜索所有不同的 producer→consumer ordered core pairs；不会把未下沉到 TT-Metal 的 execution policy 当成不同候选。
 
-暂不生成 fusion 或 multi-core region，因为当前 BRISC backend 还不能忠实执行这些 mapping。BRISC 路径现在只做 correctness：不产生 ranking objective，也不输出 `best_mapping.yaml`。TT-Sim 的 API steps 仅作调度诊断，不作为硬件 cycles。
+暂不生成 fusion 或 multi-core region。BRISC 路径现在只做 correctness：不产生 ranking objective，也不输出 `best_mapping.yaml`。TT-Sim 的 API steps 仅作调度诊断，不作为硬件 cycles。
 
 ## 代码阅读顺序
 
@@ -46,6 +46,8 @@ python run_analyzer.py \
 | `pipeline.py` | proposal → validation → execution → feedback/history |
 | `analyzer.py` | analyzer 策略；未来 learned/Jev analyzer 也放这里 |
 | `candidate_generator.py` | 纯函数、确定性的 executable candidate 枚举 |
+| `measurement_collection.py` | 随机化 repeated measurement 与稳健聚合 |
+| `backend_contract.py` | backend capabilities、candidate signature 和 observed execution contract |
 | `specs.py` | architecture/program 数据结构 |
 | `mapping_ir.py` | Mapping IR，包括 region 和 logical-core placement |
 | `validator.py` | program/mapping/placement 合法性 |
@@ -65,7 +67,7 @@ right = ReLU(p)
 y = left + right
 ```
 
-实际计算仍是 int32 BRISC kernel；数据由 host 转发。尚未接入 Tensix FPU/SFPU、设备端 NoC、fusion 或多核 region。
+默认 BRISC 路径仍是 int32 kernel，数据由 host 转发。可选 TT-Metal 路径已覆盖单核 BF16 add，以及两个 Tensix core 之间通过设备端 NoC 传递中间 tile 的两级 add chain。TT-Sim runtime 仍只做 correctness；在真实 Wormhole 上使用 `--tensix-runtime device` 时，单核 BF16 add 和两核 chain 都会从 TT-Metal device profiler 读取 `DEVICE KERNEL DURATION [ns]`，并作为 `source=measured` 的 ranking objective。当前仍未支持通用 fusion 或多核 region。
 
 每个 trial 保存：
 - `arch.yaml`
@@ -75,7 +77,7 @@ y = left + right
 - `report.json`
 - simulator/debug artifacts
 
-整个 run 保存 `history.jsonl` 和 `summary.json`；只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
+整个 run 保存 `history.jsonl` 和 `summary.json`；每个 run 带稳定的 `run_id`，每个 trial 持久化 backend `requested_execution_signature`。backend report 另外保存运行时实际观察到的 `observed_execution`，并以 `report.objective` 作为 objective 的唯一持久化来源，不再在 trial 顶层镜像重复字段。这些 identity 不可混用。只有 backend 提供可比较 objective 时才生成 `best_mapping.yaml`。
 
 ## 测试
 
@@ -86,4 +88,31 @@ python export_schemas.py
 
 CI 会编译固定版本 TT-Sim，运行 unit tests、passthrough E2E 和 search E2E。
 
-下一阶段需要解决的是可信 performance label；在此之前不接 learned/Jev model，也不把 synthetic objective 当训练标签。
+真实 Wormhole device profiler 的 kernel duration 现在可以作为 measured performance label；TT-Sim、host wall-clock 和 synthetic 数值都不会被当成真实训练标签。
+
+可用 `export_dataset.py` 把一个或多个 analyzer run 导出成训练 JSONL：
+
+```bash
+python export_dataset.py \
+  --run results/device-run-a \
+  --run results/device-run-b \
+  --output results/dataset/measured-mappings.jsonl
+```
+
+exporter 只接受 `status=ok`、`correctness=passed`、`objective.source=measured`，并同时具备 requested execution signature、observed execution identity 和 measurement context 的 trial。dataset 将 `observation_id`、`content_hash`、`program_group_id`、`execution_group_id` 分开：重复测量保留为独立 observation，同一 observation 内容变化会被视为冲突，后续交叉验证按 program/execution group 防止泄漏。对应 JSON Schema 由 `export_schemas.py` 输出为 `dataset_record.schema.json`。完整 identity/CV 约束见 `ARCHITECTURE.md`。
+
+物理设备采样使用 `collect_measurements.py`，支持 `--backend single-add` 和 `--backend two-add-chain`：每个 effective candidate 重复执行并按固定 seed 随机打散顺序，raw trial 全部保留，同时输出 median/MAD/min/max 聚合。collection 模式不会按单次测量生成 `best_mapping.yaml`。TT-Metal device measurement 还会把 profiler API 的 duration 与独立生成的 `cpp_device_perf_report.csv` 交叉核对；不一致的 observation 会被拒绝。
+
+当前 measured workload 已覆盖单核 placement 与两级 direct-NoC chain placement；下一阶段直接建立固定 split、heuristic baseline 和 learned candidate scorer。
+
+
+## 可选 Tensix placement probe
+
+BRISC correctness 路径之外，仓库现在提供一个可选的 TT-Metal/Tensix probe，用来验证：
+
+```text
+Mapping logical core ID -> TT-Metal logical worker CoreCoord -> observed worker CoreCoord -> Tensix compute
+```
+
+它支持单个 32x32 BF16 add placement probe，以及两个不同 Tensix core 上的两级 BF16 add chain；chain 的中间 tile 直接通过 NoC 传递，不返回 host。TT-Sim 模式只验证 correctness/placement；真实 device 模式下，单核 add 与两核 chain 都会读取 TT-Metal device profiler 的 kernel duration 并提供 measured objective。search 会按 backend execution signature 去重，避免重复运行 lowering 后相同的 placement。构建和运行方法见
+`tensix_probe/README.md`。TT-Metal 作为外部依赖使用，不作为本仓库 submodule。
