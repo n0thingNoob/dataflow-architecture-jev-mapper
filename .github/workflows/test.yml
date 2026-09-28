@@ -39,7 +39,7 @@ jobs:
       - name: Unit and integration tests with coverage
         run: |
           coverage run --branch \
-            --source=analyzer,backend_contract,candidate_generator,dataset,dataset_split,evaluate_scorer,export_dataset,mapping_ir,measurement_collection,pipeline,report,scorer,specs,tt_metal_chain,tt_metal_probe,validator,workload \
+            --source=analyzer,backend_contract,candidate_generator,dataset,dataset_split,evaluate_scorer,evaluate_ttsim_profile,export_dataset,mapping_ir,measurement_collection,pipeline,report,scorer,specs,tt_metal_chain,tt_metal_probe,validator,workload \
             -m unittest discover -s tests -v
           coverage report --show-missing --fail-under=75
 
@@ -124,3 +124,4 @@ jobs:
           path: |
             spatial-mapping-analyzer/results/ci-tensix/
             spatial-mapping-analyzer/results/ci-tensix-chain/
+            spatial-mapping-analyzer/results/ci-tensix-profile/
