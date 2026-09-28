@@ -141,6 +141,29 @@ python evaluate_scorer.py \
 
 evaluation 会在相同 architecture、objective 和完整 measurement context 内比较候选；repeated observations 先按 `execution_group_id` 取 median。对于 heuristic 同分候选，不再只报告候选枚举顺序选中的一个值，而是同时记录 deterministic selection、top-score tie 数量、tie 集合中的 best/worst measured latency，以及对应 regret range。split 使用 deterministic balanced program-group assignment：数据量允许时 train/validation/test 都非空，同时继续禁止同一 `execution_group_id` 跨 split。learned scorer 放到后续独立 PR。
 
+## TT-Sim profiler experiment
+
+在不使用真实 Wormhole 的情况下，可以用 pinned TT-Metal + TT-Sim + TT-Metal device-profiler instrumentation 做 heuristic sanity experiment。该路径使用 `--tensix-runtime ttsim-profile`，profile objective 会明确标记为：
+
+```text
+name   = ttsim_profile_kernel_duration
+source = estimated
+unit   = ns
+```
+
+这些数值只用于 simulator-side ranking/regret 实验，**不会**被 `export_dataset.py` 接受为真实训练标签，也不能解释成 physical Wormhole latency。
+
+CI 中会对两级 Tensix chain 的全部 12 个 ordered producer→consumer placements 各运行 3 次，共 36 次 profiler execution，并生成：
+
+```text
+results/ci-tensix-profile/
+  summary.json
+  heuristic_vs_ttsim_profile.json
+  trial_*/
+```
+
+`evaluate_ttsim_profile.py` 会按 mapping 聚合 profiler median/MAD，再报告 heuristic 的 deterministic selection、oracle、top-score tie 数量及 tie regret range。
+
 ## 可选 Tensix placement probe
 
 BRISC correctness 路径之外，仓库现在提供一个可选的 TT-Metal/Tensix probe，用来验证：
