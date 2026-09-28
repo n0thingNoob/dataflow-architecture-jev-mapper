@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@
 #include <tt-metalium/device.hpp>
 #include <tt-metalium/distributed.hpp>
 #include <tt-metalium/host_api.hpp>
+#include <tt-metalium/experimental/profiler.hpp>
 
 using namespace tt;
 using namespace tt::tt_metal;
@@ -72,7 +74,8 @@ void write_result(
     const std::filesystem::path& path,
     bool passed,
     const CoreCoord& tt_metal_logical_core,
-    const CoreCoord& worker_core) {
+    const CoreCoord& worker_core,
+    std::optional<uint64_t> device_kernel_duration_ns) {
     std::ofstream output(path);
     if (!output) {
         throw std::runtime_error("Cannot open result path");
@@ -82,8 +85,32 @@ void write_result(
            << "  \"tt_metal_logical_core\": [" << tt_metal_logical_core.x << ", "
            << tt_metal_logical_core.y << "],\n"
            << "  \"worker_core\": [" << worker_core.x << ", " << worker_core.y << "],\n"
-           << "  \"elements\": " << (tt::constants::TILE_WIDTH * tt::constants::TILE_WIDTH) << "\n"
-           << "}\n";
+           << "  \"elements\": " << (tt::constants::TILE_WIDTH * tt::constants::TILE_WIDTH);
+    if (device_kernel_duration_ns.has_value()) {
+        output << ",\n"
+               << "  \"measurement_source\": \"tt_metal_device_profiler\",\n"
+               << "  \"device_kernel_duration_ns\": " << *device_kernel_duration_ns;
+    }
+    output << "\n}\n";
+}
+
+std::optional<uint64_t> read_device_kernel_duration_ns(distributed::MeshDevice& mesh_device) {
+    const char* enabled = std::getenv("SPATIAL_MEASURE_DEVICE");
+    if (enabled == nullptr || std::string(enabled) != "1") {
+        return std::nullopt;
+    }
+    ReadMeshDeviceProfilerResults(mesh_device);
+    const auto perf_data = experimental::GetLatestProgramsPerfData();
+    if (perf_data.size() != 1 || perf_data.begin()->second.size() != 1) {
+        throw std::runtime_error("Expected exactly one profiled program on one device");
+    }
+    const auto& program_data = *perf_data.begin()->second.begin();
+    constexpr const char* analysis_name = "DEVICE KERNEL DURATION [ns]";
+    const auto analysis = program_data.program_analyses_results.find(analysis_name);
+    if (analysis == program_data.program_analyses_results.end() || analysis->second.duration == 0) {
+        throw std::runtime_error("TT-Metal profiler did not produce a positive device kernel duration");
+    }
+    return analysis->second.duration;
 }
 
 }  // namespace
@@ -167,7 +194,8 @@ int main(int argc, char** argv) {
             }
         }
 
-        write_result(args.result, passed, core, worker_core);
+        const auto device_kernel_duration_ns = read_device_kernel_duration_ns(*mesh_device);
+        write_result(args.result, passed, core, worker_core, device_kernel_duration_ns);
         mesh_device->close();
         return passed ? 0 : 2;
     } catch (const std::exception& error) {

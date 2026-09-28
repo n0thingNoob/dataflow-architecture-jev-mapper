@@ -46,12 +46,18 @@ class TTMetalProbeTests(unittest.TestCase):
         )
         self.mapping = generate_candidates(self.arch, self.program, limit=1)[0]
 
-    def backend(self):
+    def backend(self, runtime="ttsim"):
         return TTMetalProbeBackend(
             self.tt_metal_home,
             self.probe,
             self.library,
             timeout_seconds=5,
+            runtime=runtime,
+            tt_metal_revision=(
+                "038c8bbd192aa56a8ffaf6f7010f46d0b99eeca0"
+                if runtime == "device"
+                else None
+            ),
         )
 
     def test_search_contract_only_varies_placement(self):
@@ -114,6 +120,73 @@ class TTMetalProbeTests(unittest.TestCase):
         simulator_dir = self.workdir / "tt_metal_simulator"
         self.assertTrue((simulator_dir / "libttsim.so").is_file())
         self.assertTrue((simulator_dir / "soc_descriptor.yaml").is_file())
+
+    def test_device_runtime_exposes_measured_profiler_objective(self):
+        result = {
+            "passed": True,
+            "tt_metal_logical_core": [0, 0],
+            "worker_core": [1, 1],
+            "elements": 1024,
+            "measurement_source": "tt_metal_device_profiler",
+            "device_kernel_duration_ns": 321,
+        }
+
+        def fake_run(command, **kwargs):
+            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"]) / ".logs"
+            profiler_dir.mkdir()
+            (profiler_dir / "cpp_device_perf_report.csv").write_text(
+                "DEVICE KERNEL DURATION [ns]\n321\n"
+            )
+            result_path = Path(command[command.index("--result") + 1])
+            result_path.write_text(json.dumps(result))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("tt_metal_probe.subprocess.run", side_effect=fake_run):
+            report = self.backend("device").run(
+                self.arch, self.program, self.mapping, self.workdir
+            )
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objective.value, 321)
+        self.assertEqual(report.objective.source, "measured")
+        self.assertEqual(report.metrics["latency"].value, 321)
+        self.assertEqual(
+            report.measurement_context.measurement_version,
+            "tt-metal-device-kernel-duration-v2",
+        )
+        self.assertEqual(
+            report.extensions["measurement_source"],
+            "tt_metal_device_profiler",
+        )
+
+    def test_device_runtime_rejects_profiler_csv_mismatch(self):
+        result = {
+            "passed": True,
+            "tt_metal_logical_core": [0, 0],
+            "worker_core": [1, 1],
+            "elements": 1024,
+            "measurement_source": "tt_metal_device_profiler",
+            "device_kernel_duration_ns": 321,
+        }
+
+        def fake_run(command, **kwargs):
+            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"]) / ".logs"
+            profiler_dir.mkdir()
+            (profiler_dir / "cpp_device_perf_report.csv").write_text(
+                "DEVICE KERNEL DURATION [ns]\n300\n"
+            )
+            result_path = Path(command[command.index("--result") + 1])
+            result_path.write_text(json.dumps(result))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("tt_metal_probe.subprocess.run", side_effect=fake_run):
+            report = self.backend("device").run(
+                self.arch, self.program, self.mapping, self.workdir
+            )
+        self.assertEqual(report.status, "error")
+        self.assertEqual(
+            report.extensions["error_code"],
+            "PROFILER_CROSS_CHECK_FAILED",
+        )
 
     def test_unsupported_program_never_invokes_probe(self):
         bad = self.program.model_copy(deep=True)

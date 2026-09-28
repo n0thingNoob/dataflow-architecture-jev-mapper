@@ -1,4 +1,5 @@
 """Deterministic, bounded mapping candidates supported by a backend."""
+from itertools import permutations
 from backend_contract import BackendCapabilities
 from mapping_ir import Mapping, Region
 from specs import fingerprint
@@ -37,10 +38,9 @@ def _topological_orders(program, limit):
     return orders
 
 
-def _placement_rotations(available_cores, op_count):
-    """Generate simple one-op/one-core placements over logical core IDs."""
-    for offset in range(available_cores):
-        yield tuple((offset + index) % available_cores for index in range(op_count))
+def _placement_assignments(available_cores, op_count):
+    """Generate deterministic injective one-op/one-core placements."""
+    yield from permutations(range(available_cores), op_count)
 
 
 def generate_candidates(
@@ -66,7 +66,7 @@ def generate_candidates(
         raise ValueError("Program has no legal topological order")
 
     placements = (
-        _placement_rotations(architecture.available_cores, len(program.ops))
+        _placement_assignments(architecture.available_cores, len(program.ops))
         if capabilities.placement
         else [tuple(range(len(program.ops)))]
     )

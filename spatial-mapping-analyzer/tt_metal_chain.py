@@ -1,5 +1,4 @@
 """TT-Metal backend for a two-core producer-consumer Tensix chain."""
-import csv
 import hashlib
 from pathlib import Path
 
@@ -9,6 +8,7 @@ from specs import fingerprint
 from tt_metal_probe import (
     TTMetalProbeBackend,
     logical_core_id_to_tt_metal_logical_core,
+    profiler_csv_durations,
 )
 from validator import validate_inputs, validate_mapping
 
@@ -21,22 +21,6 @@ def kernel_bundle_sha256(kernel_root):
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
-
-
-def profiler_csv_durations(path):
-    with path.open(newline="") as stream:
-        reader = csv.DictReader(stream)
-        field = "DEVICE KERNEL DURATION [ns]"
-        if field not in (reader.fieldnames or []):
-            raise ValueError(f"Profiler report is missing {field}")
-        values = []
-        for row in reader:
-            raw = (row.get(field) or "").strip()
-            if raw:
-                values.append(int(raw))
-    if not values:
-        raise ValueError("Profiler report contains no device kernel duration")
-    return values
 
 
 def check_chain_supported(architecture, program, mapping):

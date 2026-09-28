@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from analyzer import EnumeratingAnalyzer, PassthroughAnalyzer
 from backend_contract import BackendCapabilities
 from candidate_generator import (
-    _placement_rotations,
+    _placement_assignments,
     _topological_orders,
     generate_candidates,
 )
@@ -30,11 +30,35 @@ class CandidateTests(unittest.TestCase):
         self.assertIn(("Producer", "Right", "Left", "Join"), orders)
         self.assertTrue(all(order[0] == "Producer" and order[-1] == "Join" for order in orders))
 
-    def test_placement_rotations_are_deterministic(self):
+    def test_placement_assignments_are_deterministic_and_complete(self):
+        placements = list(_placement_assignments(4, 3))
+        self.assertEqual(len(placements), 24)
         self.assertEqual(
-            list(_placement_rotations(4, 3)),
-            [(0, 1, 2), (1, 2, 3), (2, 3, 0), (3, 0, 1)],
+            placements[:4],
+            [(0, 1, 2), (0, 1, 3), (0, 2, 1), (0, 2, 3)],
         )
+
+    def test_two_stage_search_covers_all_ordered_core_pairs(self):
+        arch = Architecture.model_validate(
+            read_yaml(ROOT / "examples/wormhole_tensix_probe.yaml")
+        )
+        program = Program.model_validate(
+            read_yaml(ROOT / "examples/bf16_two_add_chain.yaml")
+        )
+        capabilities = BackendCapabilities(
+            topological_order=False,
+            execution_policy=False,
+            placement=True,
+        )
+        candidates = generate_candidates(
+            arch, program, limit=12, capabilities=capabilities
+        )
+        placements = {
+            tuple(region.placement[0] for region in mapping.regions)
+            for mapping in candidates
+        }
+        self.assertEqual(len(placements), 12)
+        self.assertTrue(all(a != b for a, b in placements))
 
     def test_candidates_are_distinct_valid_and_explicitly_placed(self):
         candidates = generate_candidates(self.arch, self.program, limit=12)

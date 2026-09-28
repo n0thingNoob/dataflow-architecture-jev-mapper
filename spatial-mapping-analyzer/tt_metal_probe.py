@@ -1,4 +1,5 @@
 """Optional TT-Metal backend for validating Mapping IR -> Tensix placement."""
+import csv
 import hashlib
 import json
 import os
@@ -7,13 +8,29 @@ import subprocess
 from pathlib import Path
 
 from backend_contract import BackendCapabilities, ObservedExecutionIdentity
-from report import Report, unsupported_metrics
+from report import MeasurementContext, Metric, Objective, Report, unsupported_metrics
 from specs import fingerprint, write_json
 from validator import validate_inputs, validate_mapping
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_TTSIM_LIBRARY = ROOT.parent / "third_party/ttsim/src/_out/release_wh/libttsim.so"
 SOC_DESCRIPTOR_RELATIVE = Path("tt_metal/soc_descriptors/wormhole_b0_80_arch.yaml")
+
+
+def profiler_csv_durations(path):
+    with path.open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        field = "DEVICE KERNEL DURATION [ns]"
+        if field not in (reader.fieldnames or []):
+            raise ValueError(f"Profiler report is missing {field}")
+        values = []
+        for row in reader:
+            raw = (row.get(field) or "").strip()
+            if raw:
+                values.append(int(raw))
+    if not values:
+        raise ValueError("Profiler report contains no device kernel duration")
+    return values
 
 
 def logical_core_id_to_tt_metal_logical_core(architecture, logical_core):
@@ -57,7 +74,8 @@ def check_probe_supported(architecture, program, mapping):
 
 class TTMetalProbeBackend:
     name = "tt-metal-tensix-probe"
-    backend_version = "bf16-add-v2"
+    backend_version = "bf16-add-v3"
+    measurement_version = "tt-metal-device-kernel-duration-v2"
     compute_path = "Tensix via TT-Metal"
     probe_label = "Tensix probe"
     search_capabilities = BackendCapabilities(
@@ -314,17 +332,67 @@ class TTMetalProbeBackend:
                 "worker_core": result["worker_core"],
             },
         )
+        objective = None
+        measurement_context = None
+        metrics = unsupported_metrics("This runtime does not expose this metric")
+        if self.runtime == "device":
+            duration = result.get("device_kernel_duration_ns")
+            if (
+                result.get("measurement_source")
+                != "tt_metal_device_profiler"
+                or isinstance(duration, bool)
+                or not isinstance(duration, (int, float))
+                or duration <= 0
+            ):
+                return self._failure(
+                    mapping,
+                    "PROBE_RESULT_MISMATCH",
+                    "Device result is missing a valid TT-Metal profiler duration",
+                )
+            profiler_report = Path(provenance["profiler_report"])
+            try:
+                csv_durations = profiler_csv_durations(profiler_report)
+            except (OSError, ValueError) as exc:
+                return self._failure(
+                    mapping, "PROFILER_CROSS_CHECK_FAILED", str(exc)
+                )
+            if set(csv_durations) != {int(duration)}:
+                return self._failure(
+                    mapping,
+                    "PROFILER_CROSS_CHECK_FAILED",
+                    "Profiler API duration does not match cpp_device_perf_report.csv",
+                )
+            objective = Objective(
+                name="device_kernel_duration",
+                value=float(duration),
+                unit="ns",
+                source="measured",
+            )
+            measurement_context = MeasurementContext(
+                measurement_version=self.measurement_version,
+                runtime="device",
+                source="tt_metal_device_profiler",
+                analysis="DEVICE KERNEL DURATION [ns]",
+                implementation_revision=provenance["tt_metal_revision"],
+                executable_sha256=provenance["probe_binary_sha256"],
+                configuration={
+                    **provenance["profiler_configuration"],
+                    "cross_check": "cpp_device_perf_report.csv",
+                },
+            )
+            metrics["latency"] = Metric(
+                value=float(duration), unit="ns", status="available"
+            )
         return Report(
             backend=self.name,
             backend_version=self.backend_version,
             status="ok" if passed else "error",
             mapping_hash=fingerprint(mapping),
             correctness="passed" if passed else "failed",
-            objective=None,
+            objective=objective if passed else None,
             observed_execution=observed_execution,
-            metrics=unsupported_metrics(
-                "Placement probe validates Tensix execution but does not expose a timing objective"
-            ),
+            measurement_context=measurement_context if passed else None,
+            metrics=metrics,
             message=(
                 f"BF16 add executed on TT-Metal logical core {(core_x, core_y)}"
                 if passed
@@ -334,6 +402,11 @@ class TTMetalProbeBackend:
                 "compute_path": "Tensix UNPACK/MATH/PACK via TT-Metal",
                 "transfers": "TT-Metal DRAM and circular buffers",
                 "runtime": self.runtime,
+                "measurement_source": (
+                    "tt_metal_device_profiler"
+                    if objective is not None
+                    else "unavailable"
+                ),
                 "mapping_logical_core_id": mapping.regions[0].placement[0],
                 "tt_metal_logical_core": tt_metal_logical_core,
                 "worker_core": result["worker_core"],
