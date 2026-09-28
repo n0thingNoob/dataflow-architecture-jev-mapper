@@ -154,6 +154,7 @@ class TTMetalProbeBackend:
                 "TT_METAL_DEVICE_PROFILER",
                 "TT_METAL_PROFILER_MID_RUN_DUMP",
                 "TT_METAL_PROFILER_CPP_POST_PROCESS",
+                "TT_METAL_PROFILER_DIR",
             ):
                 env.pop(name, None)
             provenance = {
@@ -170,6 +171,8 @@ class TTMetalProbeBackend:
                 "TT_METAL_SLOW_DISPATCH_MODE",
             ):
                 env.pop(name, None)
+            profiler_dir = workdir / "tt_metal_profiler"
+            profiler_dir.mkdir()
             profiler_config = {
                 "TT_METAL_DEVICE_PROFILER": "1",
                 "TT_METAL_PROFILER_MID_RUN_DUMP": "1",
@@ -178,6 +181,7 @@ class TTMetalProbeBackend:
             env.update(
                 {
                     "SPATIAL_MEASURE_DEVICE": "1",
+                    "TT_METAL_PROFILER_DIR": str(profiler_dir),
                     **profiler_config,
                 }
             )
@@ -187,6 +191,9 @@ class TTMetalProbeBackend:
                 "tt_metal_revision": self.tt_metal_revision,
                 "probe_binary_sha256": probe_sha256,
                 "profiler_configuration": profiler_config,
+                "profiler_report": str(
+                    profiler_dir / ".logs" / "cpp_device_perf_report.csv"
+                ),
             }
 
         return env, provenance

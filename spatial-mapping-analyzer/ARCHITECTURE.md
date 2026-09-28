@@ -68,8 +68,10 @@ Before using physical-device labels for training:
 - retain all raw repeated observations;
 - randomize candidate execution order during repeated measurements to reduce
   warm-up, thermal, clock, and runtime-state confounding;
-- cross-check TT-Metal profiler API extraction against an independent parser of
-  profiler output before freezing a dataset release.
+- aggregate repeated observations with robust statistics such as median and MAD,
+  while keeping raw observations as the source of truth;
+- cross-check TT-Metal profiler API extraction against
+  `cpp_device_perf_report.csv` before accepting a device measurement.
 
 The GitHub `tt-metal-ttsim` job validates real TT-Metal code against pinned
 TT-Sim. It is not physical-device performance validation.

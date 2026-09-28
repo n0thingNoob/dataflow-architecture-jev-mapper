@@ -46,6 +46,7 @@ candidate search 由 backend 显式声明哪些 Mapping IR 自由度会改变真
 | `pipeline.py` | proposal → validation → execution → feedback/history |
 | `analyzer.py` | analyzer 策略；未来 learned/Jev analyzer 也放这里 |
 | `candidate_generator.py` | 纯函数、确定性的 executable candidate 枚举 |
+| `measurement_collection.py` | 随机化 repeated measurement 与稳健聚合 |
 | `backend_contract.py` | backend capabilities、candidate signature 和 observed execution contract |
 | `specs.py` | architecture/program 数据结构 |
 | `mapping_ir.py` | Mapping IR，包括 region 和 logical-core placement |
@@ -100,7 +101,9 @@ python export_dataset.py \
 
 exporter 只接受 `status=ok`、`correctness=passed`、`objective.source=measured`，并同时具备 requested execution signature、observed execution identity 和 measurement context 的 trial。dataset 将 `observation_id`、`content_hash`、`program_group_id`、`execution_group_id` 分开：重复测量保留为独立 observation，同一 observation 内容变化会被视为冲突，后续交叉验证按 program/execution group 防止泄漏。对应 JSON Schema 由 `export_schemas.py` 输出为 `dataset_record.schema.json`。完整 identity/CV 约束见 `ARCHITECTURE.md`。
 
-下一阶段可以在这个 dataset contract 上做 collection/replay 和 baseline model。
+物理设备采样使用 `collect_measurements.py`：每个 effective candidate 重复执行并按固定 seed 随机打散顺序，raw trial 全部保留，同时输出 median/MAD/min/max 聚合。collection 模式不会按单次测量生成 `best_mapping.yaml`。TT-Metal device measurement 还会把 profiler API 的 duration 与独立生成的 `cpp_device_perf_report.csv` 交叉核对；不一致的 observation 会被拒绝。
+
+下一阶段可以在这些 cross-validated measurement 上扩 workload coverage，再做 baseline model。
 
 
 ## 可选 Tensix placement probe

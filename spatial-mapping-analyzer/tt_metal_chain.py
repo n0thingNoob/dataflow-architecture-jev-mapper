@@ -1,4 +1,5 @@
 """TT-Metal backend for a two-core producer-consumer Tensix chain."""
+import csv
 import hashlib
 from pathlib import Path
 
@@ -20,6 +21,22 @@ def kernel_bundle_sha256(kernel_root):
         digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def profiler_csv_durations(path):
+    with path.open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        field = "DEVICE KERNEL DURATION [ns]"
+        if field not in (reader.fieldnames or []):
+            raise ValueError(f"Profiler report is missing {field}")
+        values = []
+        for row in reader:
+            raw = (row.get(field) or "").strip()
+            if raw:
+                values.append(int(raw))
+    if not values:
+        raise ValueError("Profiler report contains no device kernel duration")
+    return values
 
 
 def check_chain_supported(architecture, program, mapping):
@@ -75,7 +92,7 @@ def check_chain_supported(architecture, program, mapping):
 class TTMetalChainBackend(TTMetalProbeBackend):
     name = "tt-metal-tensix-chain"
     backend_version = "bf16-add-chain-v2"
-    measurement_version = "tt-metal-device-kernel-duration-v1"
+    measurement_version = "tt-metal-device-kernel-duration-v2"
     compute_path = "Two-stage Tensix add chain via TT-Metal"
     probe_label = "Tensix chain probe"
     def candidate_execution_signature(self, architecture, program, mapping):
@@ -195,6 +212,22 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                     "PROBE_RESULT_MISMATCH",
                     "Device result is missing a valid TT-Metal profiler duration",
                 )
+
+            profiler_report = Path(provenance["profiler_report"])
+            try:
+                csv_durations = profiler_csv_durations(profiler_report)
+            except (OSError, ValueError) as exc:
+                return self._failure(
+                    mapping,
+                    "PROFILER_CROSS_CHECK_FAILED",
+                    str(exc),
+                )
+            if set(csv_durations) != {int(duration)}:
+                return self._failure(
+                    mapping,
+                    "PROFILER_CROSS_CHECK_FAILED",
+                    "Profiler API duration does not match cpp_device_perf_report.csv",
+                )
             objective = Objective(
                 name="device_kernel_duration",
                 value=float(duration),
@@ -211,7 +244,10 @@ class TTMetalChainBackend(TTMetalProbeBackend):
                 artifacts={
                     "custom_kernel_bundle_sha256": custom_kernel_bundle_sha256,
                 },
-                configuration=provenance["profiler_configuration"],
+                configuration={
+                    **provenance["profiler_configuration"],
+                    "cross_check": "cpp_device_perf_report.csv",
+                },
             )
             metrics["latency"] = Metric(
                 value=float(duration),

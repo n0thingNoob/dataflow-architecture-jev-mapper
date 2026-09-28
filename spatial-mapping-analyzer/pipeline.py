@@ -82,8 +82,15 @@ def _execute(architecture, program, mapping, backend, directory, errors, objecti
         return Report(**report_fields, status="error", message=str(exc))
 
 
-def run(architecture: Architecture, program: Program, analyzer, backend,
-        iterations: int, output: Path) -> dict:
+def run(
+    architecture: Architecture,
+    program: Program,
+    analyzer,
+    backend,
+    iterations: int,
+    output: Path,
+    rank_objectives: bool = True,
+) -> dict:
     errors = validate_inputs(architecture, program)
     if iterations < 1:
         errors.append(error("ITERATIONS", "iterations", "Must be positive"))
@@ -139,7 +146,10 @@ def run(architecture: Architecture, program: Program, analyzer, backend,
             successful_trials.append(trial_id)
         if objective:
             objective_key = report.objective_key()
-            if best is None or objective.value < best["report"]["objective"]["value"]:
+            if rank_objectives and (
+                best is None
+                or objective.value < best["report"]["objective"]["value"]
+            ):
                 best = trial
 
         write_json(directory / "report.json", trial["report"])

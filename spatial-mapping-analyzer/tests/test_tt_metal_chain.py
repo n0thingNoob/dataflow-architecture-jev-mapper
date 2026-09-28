@@ -152,6 +152,11 @@ class TTMetalChainTests(unittest.TestCase):
             self.assertEqual(kwargs["env"]["SPATIAL_MEASURE_DEVICE"], "1")
             self.assertEqual(kwargs["env"]["TT_METAL_DEVICE_PROFILER"], "1")
             self.assertNotIn("TT_METAL_SIMULATOR", kwargs["env"])
+            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"]) / ".logs"
+            profiler_dir.mkdir()
+            (profiler_dir / "cpp_device_perf_report.csv").write_text(
+                "DEVICE KERNEL DURATION [ns]\n1234\n"
+            )
             result_path = Path(command[command.index("--result") + 1])
             result_path.write_text(json.dumps(result))
             return subprocess.CompletedProcess(command, 0)
@@ -169,7 +174,7 @@ class TTMetalChainTests(unittest.TestCase):
         self.assertEqual(report.metrics["latency"].value, 1234)
         self.assertEqual(
             report.measurement_context.measurement_version,
-            "tt-metal-device-kernel-duration-v1",
+            "tt-metal-device-kernel-duration-v2",
         )
         self.assertEqual(
             report.measurement_context.implementation_revision,
@@ -180,10 +185,49 @@ class TTMetalChainTests(unittest.TestCase):
             report.measurement_context.artifacts,
         )
         self.assertEqual(
+            report.measurement_context.configuration["cross_check"],
+            "cpp_device_perf_report.csv",
+        )
+        self.assertEqual(
             report.extensions["measurement_source"],
             "tt_metal_device_profiler",
         )
         self.assertFalse((self.workdir / "tt_metal_simulator").exists())
+
+    def test_device_runtime_rejects_profiler_csv_mismatch(self):
+        result = {
+            "passed": True,
+            "producer_tt_metal_logical_core": [0, 0],
+            "consumer_tt_metal_logical_core": [1, 0],
+            "producer_worker_core": [1, 1],
+            "consumer_worker_core": [2, 1],
+            "intermediate_transport": "noc_direct",
+            "intermediate_returned_to_host": False,
+            "elements": 1024,
+            "measurement_source": "tt_metal_device_profiler",
+            "device_kernel_duration_ns": 1234,
+        }
+
+        def fake_run(command, **kwargs):
+            profiler_dir = Path(kwargs["env"]["TT_METAL_PROFILER_DIR"]) / ".logs"
+            profiler_dir.mkdir()
+            (profiler_dir / "cpp_device_perf_report.csv").write_text(
+                "DEVICE KERNEL DURATION [ns]\n1200\n"
+            )
+            result_path = Path(command[command.index("--result") + 1])
+            result_path.write_text(json.dumps(result))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("tt_metal_probe.subprocess.run", side_effect=fake_run):
+            report = self.backend("device").run(
+                self.arch, self.program, self.mapping, self.workdir
+            )
+
+        self.assertEqual(report.status, "error")
+        self.assertEqual(
+            report.extensions["error_code"],
+            "PROFILER_CROSS_CHECK_FAILED",
+        )
 
     def test_device_runtime_rejects_missing_profiler_measurement(self):
         report, _ = self.run_with_result(
