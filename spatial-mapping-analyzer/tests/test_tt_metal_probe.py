@@ -55,7 +55,7 @@ class TTMetalProbeTests(unittest.TestCase):
             runtime=runtime,
             tt_metal_revision=(
                 "038c8bbd192aa56a8ffaf6f7010f46d0b99eeca0"
-                if runtime == "device"
+                if runtime in {"ttsim-profile", "device"}
                 else None
             ),
         )
@@ -120,6 +120,47 @@ class TTMetalProbeTests(unittest.TestCase):
         simulator_dir = self.workdir / "tt_metal_simulator"
         self.assertTrue((simulator_dir / "libttsim.so").is_file())
         self.assertTrue((simulator_dir / "soc_descriptor.yaml").is_file())
+
+    def test_ttsim_profile_exposes_estimated_profiler_objective(self):
+        result = {
+            "passed": True,
+            "tt_metal_logical_core": [0, 0],
+            "worker_core": [1, 1],
+            "elements": 1024,
+            "measurement_source": "tt_metal_device_profiler",
+            "device_kernel_duration_ns": 456,
+        }
+
+        def fake_run(command, **kwargs):
+            env = kwargs["env"]
+            self.assertIn("TT_METAL_SIMULATOR", env)
+            self.assertEqual(env["TT_METAL_DEVICE_PROFILER"], "1")
+            profiler_dir = Path(env["TT_METAL_PROFILER_DIR"]) / ".logs"
+            profiler_dir.mkdir()
+            (profiler_dir / "cpp_device_perf_report.csv").write_text(
+                "DEVICE KERNEL DURATION [ns]\n456\n"
+            )
+            result_path = Path(command[command.index("--result") + 1])
+            result_path.write_text(json.dumps(result))
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("tt_metal_probe.subprocess.run", side_effect=fake_run):
+            report = self.backend("ttsim-profile").run(
+                self.arch, self.program, self.mapping, self.workdir
+            )
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objective.value, 456)
+        self.assertEqual(report.objective.source, "estimated")
+        self.assertEqual(
+            report.objective.name,
+            "ttsim_profile_kernel_duration",
+        )
+        self.assertIsNone(report.measurement_context)
+        self.assertEqual(
+            report.extensions["measurement_source"],
+            "ttsim_device_profiler",
+        )
 
     def test_device_runtime_exposes_measured_profiler_objective(self):
         result = {
