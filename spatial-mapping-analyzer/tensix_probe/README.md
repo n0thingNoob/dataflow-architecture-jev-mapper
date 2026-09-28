@@ -18,9 +18,9 @@ official TT-Sim
 Tensix UNPACK / MATH / PACK
 ```
 
-TT-Sim remains correctness-only. The two-core chain can additionally run on a
-real Wormhole device and read `DEVICE KERNEL DURATION [ns]` from TT-Metal's
-device profiler. Only that device-profiler value is emitted as a measured
+TT-Sim remains correctness-only. Both the single-add placement probe and the
+two-core chain can run on a real Wormhole device and read
+`DEVICE KERNEL DURATION [ns]` from TT-Metal's device profiler. Only that device-profiler value is emitted as a measured
 ranking objective; host wall-clock and simulator timing are never used as labels.
 
 ## Prerequisites
@@ -69,14 +69,15 @@ Current scope is deliberately small:
 - one BF16 add op
 - one tile
 - one explicitly placed core
-- correctness only
-- no performance metric
+- TT-Sim correctness only
+- real-device profiler measurement supported
 
 
 ## Real Wormhole measured objective
 
-Build the probes against a Tracy-enabled TT-Metal build, then run the two-core
-chain on a physical Wormhole device:
+Build the probes against a Tracy-enabled TT-Metal build. Device-profiler
+measurement is supported for both the single-add probe and the two-core chain;
+for example, run the chain with:
 
 ```bash
 python run_analyzer.py \
@@ -108,7 +109,8 @@ physical-device performance validation.
 ## Repeated physical-device collection
 
 For dataset collection, use the dedicated collector instead of ranking single
-measurements:
+measurements. `--backend single-add` collects per-core placement measurements;
+`--backend two-add-chain` collects all ordered producer/consumer pairs by default:
 
 ```bash
 python collect_measurements.py \
